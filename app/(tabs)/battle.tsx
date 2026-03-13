@@ -34,7 +34,8 @@ const attackFrames = [
 ];
 
 export default function BattleScreen() {
-  const { character, calculateDamage, calculateMaxHP } = useCharacter();
+  const { character, calculateDamage, calculateMaxHP, resetVersion } =
+    useCharacter();
 
   const [isLoaded, setIsLoaded] = useState(false);
 
@@ -47,22 +48,38 @@ export default function BattleScreen() {
   const [playerHP, setPlayerHP] = useState(initialPlayerHP);
   const [damageNumbers, setDamageNumbers] = useState<DamageInstance[]>([]);
   const [battleResult, setBattleResult] = useState<BattleResult>(null);
-
   const [showAttack, setShowAttack] = useState(false);
   const [attackFrameIndex, setAttackFrameIndex] = useState(0);
 
   const bossShake = useRef(new Animated.Value(0)).current;
   const attackTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const attackIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const hasHandledInitialResetVersion = useRef(false);
 
   const stage = getBossStage(bossLevel);
   const bossSprite = stage.sprite;
+
   const maxPlayerHP = calculateMaxHP();
 
   const bossAttackDamage = Math.max(
     5,
     Math.floor(6 + bossLevel * 1.5 * stage.hpMultiplier),
   );
+
+  function resetBattleState() {
+    const resetBossHP = calculateBossHP(1);
+    const resetPlayerHP = calculateMaxHP();
+
+    setBossLevel(1);
+    setBossMaxHP(resetBossHP);
+    setBossHP(resetBossHP);
+    setPlayerHP(resetPlayerHP);
+    setBattleResult(null);
+    setDamageNumbers([]);
+    setShowAttack(false);
+    setAttackFrameIndex(0);
+    bossShake.setValue(0);
+  }
 
   useEffect(() => {
     async function restoreBattle() {
@@ -107,6 +124,19 @@ export default function BattleScreen() {
       battleResult,
     });
   }, [isLoaded, bossLevel, bossMaxHP, bossHP, playerHP, battleResult]);
+
+  useEffect(() => {
+    if (!isLoaded) {
+      return;
+    }
+
+    if (!hasHandledInitialResetVersion.current) {
+      hasHandledInitialResetVersion.current = true;
+      return;
+    }
+
+    resetBattleState();
+  }, [resetVersion, isLoaded]);
 
   useEffect(() => {
     setPlayerHP((prev) => {
@@ -216,7 +246,6 @@ export default function BattleScreen() {
 
     const damage = calculateDamage();
     const newHP = Math.max(0, bossHP - damage);
-
     const id = Date.now() + Math.random();
     const randomX = 175 + Math.random() * 50;
     const randomY = 250 + Math.random() * 50;
@@ -228,7 +257,6 @@ export default function BattleScreen() {
 
     playAttackAnimation();
     playBossShake();
-
     setBossHP(newHP);
 
     if (newHP <= 0) {
@@ -268,18 +296,17 @@ export default function BattleScreen() {
 
   if (!isLoaded) {
     return (
-      <SafeAreaView style={styles.container} edges={["top", "left", "right"]}>
+      <SafeAreaView style={styles.container}>
         <Text style={styles.loadingText}>Loading battle...</Text>
       </SafeAreaView>
     );
   }
 
   return (
-    <SafeAreaView style={styles.container} edges={["top", "left", "right"]}>
+    <SafeAreaView style={styles.container}>
       <Text style={styles.title}>
         {stage.icon ? `${stage.icon} ${stage.name}` : stage.name}
       </Text>
-
       <Text style={styles.subtitle}>Boss Level {bossLevel}</Text>
 
       <View style={styles.section}>
@@ -307,44 +334,35 @@ export default function BattleScreen() {
             disabled={battleResult !== null}
           >
             {bossSprite ? (
-              <Image
-                source={bossSprite}
-                style={styles.bossImage}
-                resizeMode="contain"
-              />
+              <Image source={bossSprite} style={styles.bossImage} />
             ) : (
               <View style={styles.iconBossContainer}>
-                <Text style={styles.iconBossText}>{stage.icon ?? "👹"}</Text>
+                <Text style={styles.iconBossText}>{stage.icon ?? ""}</Text>
               </View>
             )}
+
+            {showAttack && (
+              <Image
+                source={attackFrames[attackFrameIndex]}
+                style={styles.attackEffect}
+              />
+            )}
+
+            {damageNumbers.map((d) => (
+              <DamageNumber
+                key={d.id}
+                damage={d.value}
+                x={d.x}
+                y={d.y}
+                onComplete={() => removeDamageNumber(d.id)}
+              />
+            ))}
           </Pressable>
         </Animated.View>
 
-        {showAttack && (
-          <Image
-            source={attackFrames[attackFrameIndex]}
-            style={styles.attackEffect}
-            resizeMode="contain"
-          />
-        )}
-
         <View style={styles.playerWrapper}>
-          <Image
-            source={characterSprite}
-            style={styles.playerImage}
-            resizeMode="contain"
-          />
+          <Image source={characterSprite} style={styles.playerImage} />
         </View>
-
-        {damageNumbers.map((d) => (
-          <DamageNumber
-            key={d.id}
-            damage={d.value}
-            x={d.x}
-            y={d.y}
-            onComplete={() => removeDamageNumber(d.id)}
-          />
-        ))}
       </View>
 
       <Text style={styles.tapHint}>
@@ -356,9 +374,8 @@ export default function BattleScreen() {
         <Text style={styles.hpText}>
           {playerHP} / {maxPlayerHP}
         </Text>
+        <Text style={styles.stats}>Level: {character.level}</Text>
       </View>
-
-      <Text style={styles.stats}>Level: {character.level}</Text>
 
       {battleResult === "win" && (
         <>
@@ -403,36 +420,30 @@ const styles = StyleSheet.create({
     paddingTop: 10,
     paddingBottom: 90,
   },
-
   loadingText: {
     color: "white",
     fontSize: 20,
   },
-
   title: {
     fontSize: 32,
     color: "white",
     marginBottom: 5,
     textAlign: "center",
   },
-
   subtitle: {
     fontSize: 16,
     color: "#aaa",
     marginBottom: 20,
   },
-
   section: {
     width: "100%",
     alignItems: "center",
     marginBottom: 12,
   },
-
   hpText: {
     color: "#aaa",
     fontSize: 15,
   },
-
   battleArea: {
     width: "100%",
     height: 360,
@@ -442,70 +453,58 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     position: "relative",
   },
-
   bossWrapper: {
     alignItems: "center",
     justifyContent: "center",
     marginTop: 4,
   },
-
   bossPressable: {
     width: 220,
     height: 220,
     alignItems: "center",
     justifyContent: "center",
   },
-
   bossImage: {
     width: 220,
     height: 220,
   },
-
   iconBossContainer: {
     width: 220,
     height: 220,
     alignItems: "center",
     justifyContent: "center",
   },
-
   iconBossText: {
     fontSize: 96,
   },
-
   playerWrapper: {
     alignItems: "center",
     justifyContent: "center",
     marginBottom: 4,
   },
-
   playerImage: {
     width: 140,
     height: 140,
   },
-
   attackEffect: {
     position: "absolute",
     top: 88,
     width: 120,
     height: 120,
   },
-
   bossPressed: {
     opacity: 0.85,
     transform: [{ scale: 0.98 }],
   },
-
   tapHint: {
     color: "#ddd",
     fontSize: 16,
     marginBottom: 10,
   },
-
   stats: {
     color: "#aaa",
     fontSize: 16,
   },
-
   winText: {
     color: "#4caf50",
     fontSize: 22,
@@ -513,7 +512,6 @@ const styles = StyleSheet.create({
     marginTop: 16,
     marginBottom: 10,
   },
-
   loseText: {
     color: "#ff5555",
     fontSize: 22,
@@ -521,7 +519,6 @@ const styles = StyleSheet.create({
     marginTop: 16,
     marginBottom: 10,
   },
-
   actionButton: {
     backgroundColor: "#1e90ff",
     paddingHorizontal: 24,
@@ -529,7 +526,6 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     marginTop: 4,
   },
-
   actionButtonText: {
     color: "white",
     fontSize: 18,

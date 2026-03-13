@@ -45,6 +45,7 @@ export type AddWorkoutEntryInput = {
 type WorkoutHistoryContextType = {
   workoutDays: WorkoutDay[];
   addWorkoutEntries: (entries: AddWorkoutEntryInput[]) => void;
+  clearWorkoutHistory: () => void;
   getTodayWorkout: () => WorkoutDay | null;
 };
 
@@ -56,7 +57,6 @@ function getDateKey(date: Date) {
   const year = date.getFullYear();
   const month = `${date.getMonth() + 1}`.padStart(2, "0");
   const day = `${date.getDate()}`.padStart(2, "0");
-
   return `${year}-${month}-${day}`;
 }
 
@@ -145,6 +145,10 @@ export function WorkoutHistoryProvider({
     });
   }
 
+  function clearWorkoutHistory() {
+    setWorkoutDays([]);
+  }
+
   function getTodayWorkout() {
     const todayKey = getDateKey(new Date());
     return workoutDays.find((day) => day.date === todayKey) ?? null;
@@ -154,6 +158,7 @@ export function WorkoutHistoryProvider({
     () => ({
       workoutDays,
       addWorkoutEntries,
+      clearWorkoutHistory,
       getTodayWorkout,
     }),
     [workoutDays],

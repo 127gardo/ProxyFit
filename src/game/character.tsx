@@ -11,11 +11,21 @@ export type Character = {
   speed: number;
 };
 
+export const INITIAL_CHARACTER: Character = {
+  level: 1,
+  xp: 0,
+  strength: 1,
+  endurance: 1,
+  speed: 1,
+};
+
 type CharacterContextType = {
   character: Character;
   updateCharacter: (character: Character) => void;
+  resetCharacter: () => void;
   calculateDamage: () => number;
   calculateMaxHP: () => number;
+  resetVersion: number;
 };
 
 const CharacterContext = createContext<CharacterContextType | null>(null);
@@ -40,9 +50,7 @@ export function applyStatRewards(
   for (const stat of statOrder) {
     const amount = rewards[stat] ?? 0;
 
-    if (amount <= 0) {
-      continue;
-    }
+    if (amount <= 0) continue;
 
     newXP += amount;
 
@@ -72,13 +80,8 @@ export function applyStatRewards(
 }
 
 export function CharacterProvider({ children }: { children: React.ReactNode }) {
-  const [character, setCharacter] = useState<Character>({
-    level: 1,
-    xp: 0,
-    strength: 1,
-    endurance: 1,
-    speed: 1,
-  });
+  const [character, setCharacter] = useState<Character>(INITIAL_CHARACTER);
+  const [resetVersion, setResetVersion] = useState(0);
 
   useEffect(() => {
     async function loadSave() {
@@ -100,6 +103,11 @@ export function CharacterProvider({ children }: { children: React.ReactNode }) {
     setCharacter(updatedCharacter);
   }
 
+  function resetCharacter() {
+    setCharacter(INITIAL_CHARACTER);
+    setResetVersion((prev) => prev + 1);
+  }
+
   function calculateDamage() {
     return character.strength * 5;
   }
@@ -113,8 +121,10 @@ export function CharacterProvider({ children }: { children: React.ReactNode }) {
       value={{
         character,
         updateCharacter,
+        resetCharacter,
         calculateDamage,
         calculateMaxHP,
+        resetVersion,
       }}
     >
       {children}
