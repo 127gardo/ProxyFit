@@ -1,22 +1,26 @@
+// This file defines the shape of workout data, load saved history, save updated history, adds workout entries, and shares workout history across the app
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import React, {
   createContext,
   useContext,
   useEffect,
-  useMemo,
+  useMemo, // used to cache a value
   useState,
 } from "react";
 
+// AsyncStorage key for workout history
 const WORKOUT_HISTORY_KEY = "PROXYFIT_WORKOUT_HISTORY";
 
+// Says weight units can only be lbs or kg
 export type WeightUnit = "lbs" | "kg";
 
+// Defines what one logged exercise looks like
 export type WorkoutEntry = {
-  id: string;
-  exerciseId: string;
-  exerciseName: string;
+  id: string; // A unique ID for this specific entry. Helps to list rendering and identify entries
+  exerciseId: string; // Identifier. ex. bench_press
+  exerciseName: string; // Display name for user. "Bench Press"
   type: "strength" | "cardio";
-  completedAt: string;
+  completedAt: string; // Exact time the exercise was logged. ex. "2026-03-13T10:15:00.000Z"
   weight?: number;
   weightUnit?: WeightUnit;
   reps?: number;
@@ -25,11 +29,13 @@ export type WorkoutEntry = {
   distance?: number;
 };
 
+// Groups multiple entries into one day
 export type WorkoutDay = {
   date: string;
   entries: WorkoutEntry[];
 };
 
+// What the screen sends in for the user. Similar to WorkoutEntry. WorkoutEntry is the final saved object, so slightly diffferent
 export type AddWorkoutEntryInput = {
   exerciseId: string;
   exerciseName: string;
@@ -43,30 +49,35 @@ export type AddWorkoutEntryInput = {
 };
 
 type WorkoutHistoryContextType = {
-  workoutDays: WorkoutDay[];
-  addWorkoutEntries: (entries: AddWorkoutEntryInput[]) => void;
-  clearWorkoutHistory: () => void;
-  getTodayWorkout: () => WorkoutDay | null;
+  workoutDays: WorkoutDay[]; // The whole workout history, grouped by day
+  addWorkoutEntries: (entries: AddWorkoutEntryInput[]) => void; // Adds more entries to tdaoy's workout histroy
+  clearWorkoutHistory: () => void; // Deletes all workout history in memory
+  getTodayWorkout: () => WorkoutDay | null; // Returns today's workout, or null if none exists
 };
 
+// Creates the shared workout history container
 const WorkoutHistoryContext = createContext<WorkoutHistoryContextType | null>(
   null,
 );
 
+// Turns a JavaScript Date into a string like: "2026-03-13".
+// This becomes the grouping key for a workout day
 function getDateKey(date: Date) {
-  const year = date.getFullYear();
-  const month = `${date.getMonth() + 1}`.padStart(2, "0");
+  const year = date.getFullYear(); // Gets the year
+  const month = `${date.getMonth() + 1}`.padStart(2, "0"); // Gets the month. January = 0, Feb = 1, etc. padStart forces 2 digits
   const day = `${date.getDate()}`.padStart(2, "0");
-  return `${year}-${month}-${day}`;
+  return `${year}-${month}-${day}`; // Final result "2026-03-13"
 }
 
+// Provider component that wraps the app
 export function WorkoutHistoryProvider({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const [workoutDays, setWorkoutDays] = useState<WorkoutDay[]>([]);
+  const [workoutDays, setWorkoutDays] = useState<WorkoutDay[]>([]); // This stores the workout history in React state. The [] gets filled.
 
+  // When app opens, this reads saved workout history and stores it into workoutDays
   useEffect(() => {
     async function loadWorkoutHistory() {
       try {
@@ -83,6 +94,7 @@ export function WorkoutHistoryProvider({
     loadWorkoutHistory();
   }, []);
 
+  // Whenever workoutDays changes, converts it to text and saves to AsyncStorage
   useEffect(() => {
     async function saveWorkoutHistory() {
       try {
@@ -98,20 +110,24 @@ export function WorkoutHistoryProvider({
     saveWorkoutHistory();
   }, [workoutDays]);
 
+  // Adds one or more exercies to the workout history
   function addWorkoutEntries(entries: AddWorkoutEntryInput[]) {
     if (entries.length === 0) {
+      // If nothing was passed in, stop immediate. Prevents pointless updates.
       return;
     }
 
-    const now = new Date();
-    const todayKey = getDateKey(now);
+    const now = new Date(); // now is the exact current time
+    const todayKey = getDateKey(now); // todayKey is a date string like "2026-03-13"
 
+    // Takes the input entries and turns them into full WorkoutEntry objects
     const newEntries: WorkoutEntry[] = entries.map((entry) => ({
-      id: `${Date.now()}-${Math.random()}`,
+      // entries.map(...) loops through each input entry and transforms it. If the user submits 3 exercises, map creates 3 final saved workout entries.
+      id: `${Date.now()}-${Math.random()}`, // date.now is current timestamp. Math.random adds extra uniqueness
       exerciseId: entry.exerciseId,
       exerciseName: entry.exerciseName,
       type: entry.type,
-      completedAt: now.toISOString(),
+      completedAt: now.toISOString(), // Stores the exact completion time in ISO format "2026-03-13T10:20:00.000Z"
       weight: entry.weight,
       weightUnit: entry.weightUnit,
       reps: entry.reps,
@@ -120,9 +136,12 @@ export function WorkoutHistoryProvider({
       distance: entry.distance,
     }));
 
+    // Uses the previous state safely
     setWorkoutDays((prev) => {
-      const existingDayIndex = prev.findIndex((day) => day.date === todayKey);
+      const existingDayIndex = prev.findIndex((day) => day.date === todayKey); // Checks if we already have a workout day entry for today
 
+      // If we have a workout day entry, return the index. If not, return -1
+      // Create a new workout day for today, put it at the front of array, keep older days after it. Newer days appear first
       if (existingDayIndex === -1) {
         return [
           {
@@ -133,27 +152,35 @@ export function WorkoutHistoryProvider({
         ];
       }
 
+      // Makes a shallow copy of the array. Don't want to directly mutate the orginal state array
       const updatedDays = [...prev];
       const existingDay = updatedDays[existingDayIndex];
 
+      // Keep existing day info, append the new entries to its entries array
+      // So if today already had Bench Press and Squat, and you add running, then today's entries become Bench Press, Squat, Running
       updatedDays[existingDayIndex] = {
         ...existingDay,
         entries: [...existingDay.entries, ...newEntries],
       };
 
-      return updatedDays;
+      return updatedDays; // React then uses that new array as the new state
     });
   }
 
+  // Resets all history in memory to an empty array. Then because of the save effect, that empty array gets saved to AsyncStorage
   function clearWorkoutHistory() {
     setWorkoutDays([]);
   }
 
+  // Looks through workoutDays and returns today's workout group if it exists
   function getTodayWorkout() {
     const todayKey = getDateKey(new Date());
-    return workoutDays.find((day) => day.date === todayKey) ?? null;
+    return workoutDays.find((day) => day.date === todayKey) ?? null; // The ?? null means: if find(...) gives undefines, return null instead
   }
 
+  // Creates the context value object
+  // Without useMemo, React would recreate this object on every render
+  // With useMemo, React only recreates it when workoutDays changes
   const value = useMemo(
     () => ({
       workoutDays,
@@ -164,6 +191,7 @@ export function WorkoutHistoryProvider({
     [workoutDays],
   );
 
+  // Makes workout history data available to everything inside the provider
   return (
     <WorkoutHistoryContext.Provider value={value}>
       {children}
@@ -171,6 +199,7 @@ export function WorkoutHistoryProvider({
   );
 }
 
+// Custom hook. Can use useWorkoutHistory() instead of useContext(WorkoutHistoryContext)
 export function useWorkoutHistory() {
   const context = useContext(WorkoutHistoryContext);
 

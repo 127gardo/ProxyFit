@@ -9,15 +9,17 @@ import React, {
 import { ExerciseStat } from "./exercises";
 import { WeightUnit } from "./workoutHistory";
 
+// Key used to save to AsyncStorage
 const WORKOUT_SESSION_KEY = "PROXYFIT_WORKOUT_SESSION";
 
+// Defines what one exercise inside the current workout session looks like
 export type SessionEntry = {
-  id: string;
-  exerciseId: string;
-  exerciseName: string;
+  id: string; // Unique ID
+  exerciseId: string; // Machine-friendly identifier (bench_press)
+  exerciseName: string; // user-friendly identifier (Bench Press)
   type: "strength" | "cardio";
-  stats: ExerciseStat[];
-  createdAt: string;
+  stats: ExerciseStat[]; // Which stat this exercise trains
+  createdAt: string; // Timestamp
   weight?: number;
   weightUnit?: WeightUnit;
   reps?: number;
@@ -26,6 +28,7 @@ export type SessionEntry = {
   distance?: number;
 };
 
+// Defined data passed in when adding a new session entry
 type AddSessionEntryInput = {
   exerciseId: string;
   exerciseName: string;
@@ -39,33 +42,44 @@ type AddSessionEntryInput = {
   distance?: number;
 };
 
+// Defines what the reward calculation returns
 type SessionRewards = {
   rewards: Record<ExerciseStat, number>;
   totalXp: number;
 };
 
+// Defines what context provides to the rest of the app. For screens that use useWorkoutSession()
 type WorkoutSessionContextType = {
-  sessionEntries: SessionEntry[];
-  addSessionEntry: (entry: AddSessionEntryInput) => void;
-  clearSession: () => void;
+  sessionEntries: SessionEntry[]; // Exercises in the currently active workout
+  addSessionEntry: (entry: AddSessionEntryInput) => void; // Adds a new entry into current session
+  clearSession: () => void; // Removes all entries from the current session
 };
 
+// Createss the shared workout session container
 const WorkoutSessionContext = createContext<WorkoutSessionContextType | null>(
   null,
 );
 
+// calculates XP for one session entry
+// If the entry is a strength exercise, XP is based on volume
+// Volume formula: weight x reps x sets. ex. 100 x 10 x 3 = 3000
+// Then XP becomes Math.floor(3000 / 40) = 75
 export function calculateEntryXP(entry: SessionEntry) {
   if (entry.type === "strength") {
+    // entry.weight ?? 0 means use entry.weight if it exists, otherwise use 0
     const volume = (entry.weight ?? 0) * (entry.reps ?? 0) * (entry.sets ?? 1);
 
-    return Math.max(1, Math.floor(volume / 40));
+    return Math.max(1, Math.floor(volume / 40)); // Math.max(1,...) gurantees at least 1 XP. Rounds down to a whole number
   }
 
+  // If the entry is not strength, it falls into the cardio formula
+  // Cardio XP based on time and distance. If time = 20, and distance = 2, then 20 x 2 + 2 x 15 = 40 + 30 = 70
   const cardioScore = (entry.time ?? 0) * 2 + (entry.distance ?? 0) * 15;
 
   return Math.max(1, Math.floor(cardioScore));
 }
 
+// Takes all entries in the current session and calculates the total rewards
 export function calculateSessionRewards(
   entries: SessionEntry[],
 ): SessionRewards {

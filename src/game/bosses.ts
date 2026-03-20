@@ -1,3 +1,5 @@
+// This file manages bosses. Decides which boss should appear and how much HP it should have
+
 import { ImageSourcePropType } from "react-native";
 
 // Boss object
@@ -48,16 +50,18 @@ export const bosses: BossStage[] = [
   },
 ];
 
+// Chooses the correct boss based on the character's level
 export function getBossStage(level: number) {
   let current = bosses[0];
 
-  // Checks if player qualifies for a boss
+  // Checks if character qualifies for the boss
   for (const boss of bosses) {
     if (level >= boss.level) {
       current = boss;
     }
   }
 
+  //if the character qualifies, update current boss
   return current;
 }
 
@@ -67,5 +71,6 @@ export function calculateBossHP(level: number) {
   const baseHP = 100;
 
   // Formula: BossHP = baseHP x playerLevel x multiplier
+  // ex. if hpMultiplier: 1.5 and level is 5, formula is 100 x 5 x 1.5 = 750
   return Math.floor(baseHP * level * stage.hpMultiplier);
 }
