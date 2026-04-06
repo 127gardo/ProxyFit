@@ -10,6 +10,10 @@ export default function HistoryScreen() {
 
   function formatEntry(entry: WorkoutEntry) {
     if (entry.type === "strength") {
+      if (entry.weightUnit === "bodyweight") {
+        return `Bodyweight x ${entry.reps ?? 0} reps x ${entry.sets ?? 0} sets — ${entry.exerciseName}`;
+      }
+
       return `${entry.weight ?? 0} ${entry.weightUnit ?? "lbs"} x ${entry.reps ?? 0} reps x ${entry.sets ?? 0} sets — ${entry.exerciseName}`;
     }
 

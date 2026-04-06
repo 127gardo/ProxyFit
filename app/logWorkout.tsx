@@ -1,5 +1,5 @@
 import { router, useLocalSearchParams } from "expo-router";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import {
   Alert,
   Keyboard,
@@ -15,7 +15,11 @@ import {
 } from "react-native";
 
 import { getExerciseById } from "../src/game/exercises";
-import { WeightUnit } from "../src/game/workoutHistory";
+import {
+  useWorkoutHistory,
+  WeightUnit,
+  WorkoutEntry,
+} from "../src/game/workoutHistory";
 import { useWorkoutSession } from "../src/game/workoutSession";
 
 export default function LogWorkoutScreen() {
@@ -23,6 +27,7 @@ export default function LogWorkoutScreen() {
 
   const exercise = getExerciseById(id as string);
   const { addSessionEntry } = useWorkoutSession();
+  const { getLatestExerciseEntry } = useWorkoutHistory();
 
   const [reps, setReps] = useState("");
   const [sets, setSets] = useState("");
@@ -31,19 +36,64 @@ export default function LogWorkoutScreen() {
   const [time, setTime] = useState("");
   const [distance, setDistance] = useState("");
 
+  // Find the most recent saved version of this exercise.
+  // This is only for comparison on the log screen.
+  const previousEntry = useMemo(() => {
+    if (!exercise) {
+      return null;
+    }
+
+    return getLatestExerciseEntry(exercise.id);
+  }, [exercise, getLatestExerciseEntry]);
+
+  function formatPreviousEntry(entry: WorkoutEntry) {
+    if (entry.type === "strength") {
+      if (entry.weightUnit === "bodyweight") {
+        return `Bodyweight x ${entry.reps ?? 0} reps x ${entry.sets ?? 0} sets`;
+      }
+
+      return `${entry.weight ?? 0} ${entry.weightUnit ?? "lbs"} x ${entry.reps ?? 0} reps x ${entry.sets ?? 0} sets`;
+    }
+
+    return `${entry.time ?? 0} min, ${entry.distance ?? 0} distance`;
+  }
+
+  function formatPreviousDate(isoString: string) {
+    return new Date(isoString).toLocaleDateString();
+  }
+
   function saveExerciseToSession() {
     if (!exercise) return;
 
     if (exercise.type === "strength") {
-      const weightNumber = Number(weight);
       const repsNumber = Number(reps);
       const setsNumber = Number(sets);
 
-      if (!weightNumber || !repsNumber || !setsNumber) {
-        Alert.alert(
-          "Invalid input",
-          "Please enter valid weight, reps, and sets.",
-        );
+      if (!repsNumber || !setsNumber) {
+        Alert.alert("Invalid input", "Please enter valid reps and sets.");
+        return;
+      }
+
+      // Bodyweight exercises skip the weight input entirely.
+      if (weightUnit === "bodyweight") {
+        addSessionEntry({
+          exerciseId: exercise.id,
+          exerciseName: exercise.name,
+          type: exercise.type,
+          stats: exercise.stats,
+          weightUnit: "bodyweight",
+          reps: repsNumber,
+          sets: setsNumber,
+        });
+
+        router.back();
+        return;
+      }
+
+      const weightNumber = Number(weight);
+
+      if (!weightNumber) {
+        Alert.alert("Invalid input", "Please enter a valid weight.");
         return;
       }
 
@@ -100,6 +150,8 @@ export default function LogWorkoutScreen() {
     );
   }
 
+  const isBodyweight = weightUnit === "bodyweight";
+
   return (
     <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
       <KeyboardAvoidingView
@@ -113,18 +165,20 @@ export default function LogWorkoutScreen() {
         >
           <Text style={styles.title}>{exercise.name}</Text>
 
+          {previousEntry && (
+            <View style={styles.previousCard}>
+              <Text style={styles.previousTitle}>Previous Performance</Text>
+              <Text style={styles.previousText}>
+                {formatPreviousEntry(previousEntry)}
+              </Text>
+              <Text style={styles.previousSubtext}>
+                Logged on {formatPreviousDate(previousEntry.completedAt)}
+              </Text>
+            </View>
+          )}
+
           {exercise.type === "strength" && (
             <>
-              <TextInput
-                placeholder="Weight"
-                placeholderTextColor="#777"
-                keyboardType="numeric"
-                returnKeyType="done"
-                style={styles.input}
-                value={weight}
-                onChangeText={setWeight}
-              />
-
               <View style={styles.unitRow}>
                 <Pressable
                   style={({ pressed }) => [
@@ -147,7 +201,38 @@ export default function LogWorkoutScreen() {
                 >
                   <Text style={styles.unitButtonText}>kg</Text>
                 </Pressable>
+
+                <Pressable
+                  style={({ pressed }) => [
+                    styles.unitButton,
+                    weightUnit === "bodyweight" && styles.unitButtonSelected,
+                    pressed && styles.buttonPressed,
+                  ]}
+                  onPress={() => setWeightUnit("bodyweight")}
+                >
+                  <Text style={styles.unitButtonText}>Bodyweight</Text>
+                </Pressable>
               </View>
+
+              {!isBodyweight && (
+                <TextInput
+                  placeholder="Weight"
+                  placeholderTextColor="#777"
+                  keyboardType="numeric"
+                  returnKeyType="done"
+                  style={styles.input}
+                  value={weight}
+                  onChangeText={setWeight}
+                />
+              )}
+
+              {isBodyweight && (
+                <View style={styles.infoBox}>
+                  <Text style={styles.infoText}>
+                    Bodyweight selected. No weight input needed.
+                  </Text>
+                </View>
+              )}
 
               <TextInput
                 placeholder="Reps"
@@ -240,7 +325,34 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 28,
     color: "white",
-    marginBottom: 30,
+    marginBottom: 24,
+  },
+
+  previousCard: {
+    backgroundColor: "#111",
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: "#1f1f1f",
+  },
+
+  previousTitle: {
+    color: "#1e90ff",
+    fontSize: 18,
+    fontWeight: "bold",
+    marginBottom: 8,
+  },
+
+  previousText: {
+    color: "white",
+    fontSize: 16,
+    marginBottom: 6,
+  },
+
+  previousSubtext: {
+    color: "#999",
+    fontSize: 14,
   },
 
   input: {
@@ -253,6 +365,7 @@ const styles = StyleSheet.create({
 
   unitRow: {
     flexDirection: "row",
+    flexWrap: "wrap",
     marginBottom: 15,
   },
 
@@ -262,6 +375,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
     borderRadius: 8,
     marginRight: 10,
+    marginBottom: 10,
   },
 
   unitButtonSelected: {
@@ -272,6 +386,20 @@ const styles = StyleSheet.create({
     color: "white",
     fontSize: 16,
     fontWeight: "bold",
+  },
+
+  infoBox: {
+    backgroundColor: "#0f1720",
+    borderRadius: 8,
+    padding: 14,
+    marginBottom: 15,
+    borderWidth: 1,
+    borderColor: "#1e90ff",
+  },
+
+  infoText: {
+    color: "#cfe7ff",
+    fontSize: 15,
   },
 
   button: {

@@ -27,7 +27,7 @@ export const bosses: BossStage[] = [
   {
     level: 10,
     name: "Chibi",
-    icon: "🐗",
+    sprite: require("../../assets/sprites/boss3.png"),
     hpMultiplier: 2,
   },
   {

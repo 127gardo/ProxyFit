@@ -37,6 +37,10 @@ export default function CompleteWorkoutScreen() {
 
   function formatSessionEntry(entry: SessionEntry) {
     if (entry.type === "strength") {
+      if (entry.weightUnit === "bodyweight") {
+        return `Bodyweight x ${entry.reps ?? 0} reps x ${entry.sets ?? 0} sets — ${entry.exerciseName}`;
+      }
+
       return `${entry.weight ?? 0} ${entry.weightUnit ?? "lbs"} x ${entry.reps ?? 0} reps x ${entry.sets ?? 0} sets — ${entry.exerciseName}`;
     }
 
@@ -261,8 +265,8 @@ const styles = StyleSheet.create({
 
   button: {
     backgroundColor: "#1e90ff",
-    padding: 16,
-    borderRadius: 10,
+    padding: 15,
+    borderRadius: 12,
     marginTop: 8,
   },
 

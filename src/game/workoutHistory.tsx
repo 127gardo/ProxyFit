@@ -1,4 +1,5 @@
-// This file defines the shape of workout data, load saved history, save updated history, adds workout entries, and shares workout history across the app
+// This file defines the shape of workout data, load saved history, save updated history,
+// adds workout entries, and shares workout history across the app
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import React, {
   createContext,
@@ -11,12 +12,12 @@ import React, {
 // AsyncStorage key for workout history
 const WORKOUT_HISTORY_KEY = "PROXYFIT_WORKOUT_HISTORY";
 
-// Says weight units can only be lbs or kg
-export type WeightUnit = "lbs" | "kg";
+// Says weight units can only be lbs, kg, or bodyweight
+export type WeightUnit = "lbs" | "kg" | "bodyweight";
 
 // Defines what one logged exercise looks like
 export type WorkoutEntry = {
-  id: string; // A unique ID for this specific entry. Helps to list rendering and identify entries
+  id: string; // A unique ID for this specific entry. Helps list rendering and identify entries
   exerciseId: string; // Identifier. ex. bench_press
   exerciseName: string; // Display name for user. "Bench Press"
   type: "strength" | "cardio";
@@ -35,7 +36,8 @@ export type WorkoutDay = {
   entries: WorkoutEntry[];
 };
 
-// What the screen sends in for the user. Similar to WorkoutEntry. WorkoutEntry is the final saved object, so slightly diffferent
+// What the screen sends in for the user. Similar to WorkoutEntry.
+// WorkoutEntry is the final saved object, so slightly different
 export type AddWorkoutEntryInput = {
   exerciseId: string;
   exerciseName: string;
@@ -50,9 +52,10 @@ export type AddWorkoutEntryInput = {
 
 type WorkoutHistoryContextType = {
   workoutDays: WorkoutDay[]; // The whole workout history, grouped by day
-  addWorkoutEntries: (entries: AddWorkoutEntryInput[]) => void; // Adds more entries to tdaoy's workout histroy
+  addWorkoutEntries: (entries: AddWorkoutEntryInput[]) => void; // Adds more entries to today's workout history
   clearWorkoutHistory: () => void; // Deletes all workout history in memory
   getTodayWorkout: () => WorkoutDay | null; // Returns today's workout, or null if none exists
+  getLatestExerciseEntry: (exerciseId: string) => WorkoutEntry | null; // Returns the most recently completed version of a specific exercise
 };
 
 // Creates the shared workout history container
@@ -110,10 +113,10 @@ export function WorkoutHistoryProvider({
     saveWorkoutHistory();
   }, [workoutDays]);
 
-  // Adds one or more exercies to the workout history
+  // Adds one or more exercises to the workout history
   function addWorkoutEntries(entries: AddWorkoutEntryInput[]) {
     if (entries.length === 0) {
-      // If nothing was passed in, stop immediate. Prevents pointless updates.
+      // If nothing was passed in, stop immediately. Prevents pointless updates.
       return;
     }
 
@@ -140,8 +143,9 @@ export function WorkoutHistoryProvider({
     setWorkoutDays((prev) => {
       const existingDayIndex = prev.findIndex((day) => day.date === todayKey); // Checks if we already have a workout day entry for today
 
-      // If we have a workout day entry, return the index. If not, return -1
-      // Create a new workout day for today, put it at the front of array, keep older days after it. Newer days appear first
+      // If we do not already have a workout day entry for today,
+      // create one, put it at the front of the array, and keep older days after it.
+      // Newer days appear first.
       if (existingDayIndex === -1) {
         return [
           {
@@ -152,12 +156,13 @@ export function WorkoutHistoryProvider({
         ];
       }
 
-      // Makes a shallow copy of the array. Don't want to directly mutate the orginal state array
+      // Makes a shallow copy of the array. Don't want to directly mutate the original state array
       const updatedDays = [...prev];
       const existingDay = updatedDays[existingDayIndex];
 
       // Keep existing day info, append the new entries to its entries array
-      // So if today already had Bench Press and Squat, and you add running, then today's entries become Bench Press, Squat, Running
+      // So if today already had Bench Press and Squat, and you add Running,
+      // then today's entries become Bench Press, Squat, Running
       updatedDays[existingDayIndex] = {
         ...existingDay,
         entries: [...existingDay.entries, ...newEntries],
@@ -167,7 +172,8 @@ export function WorkoutHistoryProvider({
     });
   }
 
-  // Resets all history in memory to an empty array. Then because of the save effect, that empty array gets saved to AsyncStorage
+  // Resets all history in memory to an empty array.
+  // Then because of the save effect, that empty array gets saved to AsyncStorage
   function clearWorkoutHistory() {
     setWorkoutDays([]);
   }
@@ -175,7 +181,25 @@ export function WorkoutHistoryProvider({
   // Looks through workoutDays and returns today's workout group if it exists
   function getTodayWorkout() {
     const todayKey = getDateKey(new Date());
-    return workoutDays.find((day) => day.date === todayKey) ?? null; // The ?? null means: if find(...) gives undefines, return null instead
+    return workoutDays.find((day) => day.date === todayKey) ?? null; // The ?? null means: if find(...) gives undefined, return null instead
+  }
+
+  // Searches every saved entry and returns the most recent version of one specific exercise.
+  // This is useful for showing the user what they last did when they open the log screen.
+  function getLatestExerciseEntry(exerciseId: string) {
+    for (const day of workoutDays) {
+      // Loop backward through each day so if the same exercise was logged multiple times that day,
+      // we get the latest one from that day.
+      for (let i = day.entries.length - 1; i >= 0; i -= 1) {
+        const entry = day.entries[i];
+
+        if (entry.exerciseId === exerciseId) {
+          return entry;
+        }
+      }
+    }
+
+    return null;
   }
 
   // Creates the context value object
@@ -187,6 +211,7 @@ export function WorkoutHistoryProvider({
       addWorkoutEntries,
       clearWorkoutHistory,
       getTodayWorkout,
+      getLatestExerciseEntry,
     }),
     [workoutDays],
   );

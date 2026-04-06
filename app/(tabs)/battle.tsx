@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   Animated,
   Image,
+  ImageSourcePropType,
   Pressable,
   StyleSheet,
   Text,
@@ -10,6 +11,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import DamageNumber from "../../src/components/DamageNumber";
 import HealthBar from "../../src/components/HealthBar";
+import { sprites } from "../../src/game/assets";
 import {
   BattleResult,
   createInitialBattleProgress,
@@ -18,6 +20,7 @@ import {
 } from "../../src/game/battleProgress";
 import { calculateBossHP, getBossStage } from "../../src/game/bosses";
 import { useCharacter } from "../../src/game/character";
+import { getBasicSkill, getChargedSkill, Skill } from "../../src/game/skills";
 
 type DamageInstance = {
   id: number;
@@ -26,12 +29,48 @@ type DamageInstance = {
   y: number;
 };
 
-const characterSprite = require("../../assets/sprites/character.png");
+type ActiveEffectKey =
+  | "lightning_small"
+  | "lightning_big"
+  | "lightning_ultimate"
+  | null;
 
-const attackFrames = [
-  require("../../assets/effects/attack1.png"),
-  require("../../assets/effects/attack2.png"),
-];
+const effectFrameMap: Record<
+  Exclude<ActiveEffectKey, null>,
+  ImageSourcePropType[]
+> = {
+  lightning_small: [
+    require("../../assets/effects/skills/lightnining_small_0.png"),
+    require("../../assets/effects/skills/lightnining_small_1.png"),
+    require("../../assets/effects/skills/lightnining_small_2.png"),
+    require("../../assets/effects/skills/lightnining_small_3.png"),
+  ],
+  lightning_big: [
+    require("../../assets/effects/skills/lightnining_big_0.png"),
+    require("../../assets/effects/skills/lightnining_big_1.png"),
+    require("../../assets/effects/skills/lightnining_big_2.png"),
+    require("../../assets/effects/skills/lightnining_big_3.png"),
+  ],
+  lightning_ultimate: [
+    require("../../assets/effects/skills/lightnining_big_0.png"),
+    require("../../assets/effects/skills/lightnining_big_1.png"),
+    require("../../assets/effects/skills/lightnining_big_2.png"),
+    require("../../assets/effects/skills/lightnining_big_3.png"),
+  ],
+};
+
+function getEffectKeyForSkill(skill: Skill): ActiveEffectKey {
+  if (skill.element === "lightning" && skill.tier === "small") {
+    return "lightning_small";
+  }
+  if (skill.element === "lightning" && skill.tier === "big") {
+    return "lightning_big";
+  }
+  if (skill.element === "lightning" && skill.tier === "ultimate") {
+    return "lightning_ultimate";
+  }
+  return null;
+}
 
 export default function BattleScreen() {
   const { character, calculateDamage, calculateMaxHP, resetVersion } =
@@ -48,12 +87,22 @@ export default function BattleScreen() {
   const [playerHP, setPlayerHP] = useState(initialPlayerHP);
   const [damageNumbers, setDamageNumbers] = useState<DamageInstance[]>([]);
   const [battleResult, setBattleResult] = useState<BattleResult>(null);
-  const [showAttack, setShowAttack] = useState(false);
-  const [attackFrameIndex, setAttackFrameIndex] = useState(0);
+
+  const [basicHitCount, setBasicHitCount] = useState(0);
+  const [chargedReady, setChargedReady] = useState(false);
+
+  const [activeEffectKey, setActiveEffectKey] = useState<ActiveEffectKey>(null);
+  const [activeEffectFrame, setActiveEffectFrame] = useState<number | null>(
+    null,
+  );
+  const [activeEffectSize, setActiveEffectSize] = useState({
+    width: 220,
+    height: 220,
+  });
 
   const bossShake = useRef(new Animated.Value(0)).current;
-  const attackTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const attackIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const effectIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const effectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hasHandledInitialResetVersion = useRef(false);
 
   const stage = getBossStage(bossLevel);
@@ -61,10 +110,33 @@ export default function BattleScreen() {
 
   const maxPlayerHP = calculateMaxHP();
 
+  const basicSkill = getBasicSkill();
+  const chargedSkill = getChargedSkill();
+
+  const chargedHitsRequired = chargedSkill?.hitsRequired ?? 5;
+
   const bossAttackDamage = Math.max(
     5,
     Math.floor(6 + bossLevel * 1.5 * stage.hpMultiplier),
   );
+
+  function clearEffectTimers() {
+    if (effectIntervalRef.current) {
+      clearInterval(effectIntervalRef.current);
+      effectIntervalRef.current = null;
+    }
+
+    if (effectTimeoutRef.current) {
+      clearTimeout(effectTimeoutRef.current);
+      effectTimeoutRef.current = null;
+    }
+  }
+
+  function stopEffect() {
+    clearEffectTimers();
+    setActiveEffectKey(null);
+    setActiveEffectFrame(null);
+  }
 
   function resetBattleState() {
     const resetBossHP = calculateBossHP(1);
@@ -76,9 +148,10 @@ export default function BattleScreen() {
     setPlayerHP(resetPlayerHP);
     setBattleResult(null);
     setDamageNumbers([]);
-    setShowAttack(false);
-    setAttackFrameIndex(0);
+    setBasicHitCount(0);
+    setChargedReady(false);
     bossShake.setValue(0);
+    stopEffect();
   }
 
   useEffect(() => {
@@ -170,13 +243,7 @@ export default function BattleScreen() {
 
   useEffect(() => {
     return () => {
-      if (attackTimeoutRef.current) {
-        clearTimeout(attackTimeoutRef.current);
-      }
-
-      if (attackIntervalRef.current) {
-        clearInterval(attackIntervalRef.current);
-      }
+      clearEffectTimers();
     };
   }, []);
 
@@ -210,58 +277,108 @@ export default function BattleScreen() {
     ]).start();
   }
 
-  function playAttackAnimation() {
-    if (attackTimeoutRef.current) {
-      clearTimeout(attackTimeoutRef.current);
+  function playSkillEffect(skill: Skill) {
+    const effectKey = getEffectKeyForSkill(skill);
+
+    if (!effectKey) {
+      stopEffect();
+      return;
     }
 
-    if (attackIntervalRef.current) {
-      clearInterval(attackIntervalRef.current);
+    const frames = effectFrameMap[effectKey];
+
+    if (!frames.length) {
+      stopEffect();
+      return;
     }
 
-    setAttackFrameIndex(0);
-    setShowAttack(true);
+    clearEffectTimers();
+
+    const frameDuration = Math.max(skill.frameDurationMs, 140);
+
+    setActiveEffectSize({
+      width: Math.max(skill.width, 220),
+      height: Math.max(skill.height, 220),
+    });
+
+    setActiveEffectKey(effectKey);
+    setActiveEffectFrame(0);
 
     let frame = 0;
 
-    attackIntervalRef.current = setInterval(() => {
-      frame = (frame + 1) % attackFrames.length;
-      setAttackFrameIndex(frame);
-    }, 100);
+    effectIntervalRef.current = setInterval(() => {
+      frame += 1;
 
-    attackTimeoutRef.current = setTimeout(() => {
-      if (attackIntervalRef.current) {
-        clearInterval(attackIntervalRef.current);
+      if (frame >= frames.length) {
+        stopEffect();
+        return;
       }
 
-      setShowAttack(false);
-      setAttackFrameIndex(0);
-    }, 320);
+      setActiveEffectFrame(frame);
+    }, frameDuration);
+
+    effectTimeoutRef.current = setTimeout(
+      () => {
+        stopEffect();
+      },
+      frames.length * frameDuration + 60,
+    );
   }
 
-  function attackBoss() {
+  function spawnDamageNumber(value: number) {
+    const id = Date.now() + Math.random();
+
+    const randomX = 90 + Math.random() * 30;
+    const randomY = 90 + Math.random() * 30;
+
+    setDamageNumbers((prev) => [
+      ...prev,
+      { id, value, x: randomX, y: randomY },
+    ]);
+  }
+
+  function applyAttack(skill: Skill) {
     if (!isLoaded || battleResult !== null) {
       return;
     }
 
-    const damage = calculateDamage();
+    const baseDamage = calculateDamage();
+    const damage = Math.max(1, Math.floor(baseDamage * skill.damageMultiplier));
     const newHP = Math.max(0, bossHP - damage);
-    const id = Date.now() + Math.random();
-    const randomX = 175 + Math.random() * 50;
-    const randomY = 250 + Math.random() * 50;
 
-    setDamageNumbers((prev) => [
-      ...prev,
-      { id, value: damage, x: randomX, y: randomY },
-    ]);
-
-    playAttackAnimation();
+    spawnDamageNumber(damage);
+    playSkillEffect(skill);
     playBossShake();
     setBossHP(newHP);
 
     if (newHP <= 0) {
       setBattleResult("win");
     }
+  }
+
+  function attackBoss() {
+    if (!basicSkill || battleResult !== null) {
+      return;
+    }
+
+    applyAttack(basicSkill);
+
+    const newHitCount = basicHitCount + 1;
+    setBasicHitCount(newHitCount);
+
+    if (chargedSkill && newHitCount >= chargedHitsRequired) {
+      setChargedReady(true);
+    }
+  }
+
+  function useChargedSkill() {
+    if (!chargedSkill || !chargedReady || battleResult !== null) {
+      return;
+    }
+
+    applyAttack(chargedSkill);
+    setBasicHitCount(0);
+    setChargedReady(false);
   }
 
   function removeDamageNumber(id: number) {
@@ -277,9 +394,11 @@ export default function BattleScreen() {
     setBossHP(nextHP);
     setPlayerHP(maxPlayerHP);
     setBattleResult(null);
-    setShowAttack(false);
-    setAttackFrameIndex(0);
+    setDamageNumbers([]);
+    setBasicHitCount(0);
+    setChargedReady(false);
     bossShake.setValue(0);
+    stopEffect();
   }
 
   function retryBoss() {
@@ -289,10 +408,20 @@ export default function BattleScreen() {
     setBossHP(sameBossHP);
     setPlayerHP(maxPlayerHP);
     setBattleResult(null);
-    setShowAttack(false);
-    setAttackFrameIndex(0);
+    setDamageNumbers([]);
+    setBasicHitCount(0);
+    setChargedReady(false);
     bossShake.setValue(0);
+    stopEffect();
   }
+
+  const effectSource =
+    activeEffectKey !== null &&
+    activeEffectFrame !== null &&
+    activeEffectFrame >= 0 &&
+    activeEffectFrame < effectFrameMap[activeEffectKey].length
+      ? effectFrameMap[activeEffectKey][activeEffectFrame]
+      : null;
 
   if (!isLoaded) {
     return (
@@ -301,6 +430,10 @@ export default function BattleScreen() {
       </SafeAreaView>
     );
   }
+
+  const chargeProgress = chargedSkill
+    ? `${Math.min(basicHitCount, chargedHitsRequired)} / ${chargedHitsRequired}`
+    : "0 / 0";
 
   return (
     <SafeAreaView style={styles.container}>
@@ -316,7 +449,18 @@ export default function BattleScreen() {
         </Text>
       </View>
 
-      <View style={styles.battleArea}>
+      <Pressable
+        style={({ pressed }) => [
+          styles.battleArea,
+          pressed && battleResult === null && styles.battleAreaPressed,
+        ]}
+        onPress={attackBoss}
+        disabled={battleResult !== null}
+      >
+        <View style={styles.playerWrapper}>
+          <Image source={sprites.player} style={styles.playerImage} />
+        </View>
+
         <Animated.View
           style={[
             styles.bossWrapper,
@@ -325,27 +469,13 @@ export default function BattleScreen() {
             },
           ]}
         >
-          <Pressable
-            style={({ pressed }) => [
-              styles.bossPressable,
-              pressed && battleResult === null && styles.bossPressed,
-            ]}
-            onPress={attackBoss}
-            disabled={battleResult !== null}
-          >
+          <View style={styles.bossPressable}>
             {bossSprite ? (
               <Image source={bossSprite} style={styles.bossImage} />
             ) : (
               <View style={styles.iconBossContainer}>
                 <Text style={styles.iconBossText}>{stage.icon ?? ""}</Text>
               </View>
-            )}
-
-            {showAttack && (
-              <Image
-                source={attackFrames[attackFrameIndex]}
-                style={styles.attackEffect}
-              />
             )}
 
             {damageNumbers.map((d) => (
@@ -357,16 +487,28 @@ export default function BattleScreen() {
                 onComplete={() => removeDamageNumber(d.id)}
               />
             ))}
-          </Pressable>
+          </View>
         </Animated.View>
 
-        <View style={styles.playerWrapper}>
-          <Image source={characterSprite} style={styles.playerImage} />
-        </View>
-      </View>
+        {effectSource !== null && activeEffectFrame !== null && (
+          <Image
+            key={`${activeEffectKey}-${activeEffectFrame}`}
+            source={effectSource}
+            style={[
+              styles.effectBase,
+              {
+                left: 120,
+                top: 40,
+                width: activeEffectSize.width,
+                height: activeEffectSize.height,
+              },
+            ]}
+          />
+        )}
+      </Pressable>
 
       <Text style={styles.tapHint}>
-        {battleResult === null ? "Tap the boss to attack" : "Battle Over"}
+        {battleResult === null ? "Tap anywhere to attack" : "Battle Over"}
       </Text>
 
       <View style={styles.section}>
@@ -406,6 +548,31 @@ export default function BattleScreen() {
           </Pressable>
         </>
       )}
+
+      <View style={styles.bottomSkillPanel}>
+        <View style={styles.skillInfo}>
+          <Text style={styles.skillLabel}>Charge: {chargeProgress}</Text>
+          <Text style={styles.skillSubLabel}>
+            {chargedSkill ? chargedSkill.name : "No charged skill"}
+          </Text>
+        </View>
+
+        <Pressable
+          style={({ pressed }) => [
+            styles.skillButton,
+            chargedReady ? styles.skillButtonReady : styles.skillButtonLocked,
+            pressed && chargedReady && styles.skillButtonPressed,
+          ]}
+          onPress={useChargedSkill}
+          disabled={!chargedReady || battleResult !== null}
+        >
+          <Text style={styles.skillButtonText}>
+            {chargedReady
+              ? `Use ${chargedSkill?.name ?? "Skill"}`
+              : "Skill Not Ready"}
+          </Text>
+        </Pressable>
+      </View>
     </SafeAreaView>
   );
 }
@@ -415,10 +582,10 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: "#000",
     alignItems: "center",
-    justifyContent: "center",
+    justifyContent: "flex-start",
     paddingHorizontal: 20,
     paddingTop: 10,
-    paddingBottom: 90,
+    paddingBottom: 110,
   },
   loadingText: {
     color: "white",
@@ -446,17 +613,37 @@ const styles = StyleSheet.create({
   },
   battleArea: {
     width: "100%",
-    height: 360,
-    alignItems: "center",
-    justifyContent: "space-between",
+    height: 320,
+    position: "relative",
     marginTop: 8,
     marginBottom: 10,
-    position: "relative",
+    overflow: "hidden",
   },
-  bossWrapper: {
+  battleAreaPressed: {
+    opacity: 0.98,
+  },
+  playerWrapper: {
+    position: "absolute",
+    left: 10,
+    top: 140,
+    width: 140,
+    height: 140,
     alignItems: "center",
     justifyContent: "center",
-    marginTop: 4,
+    zIndex: 1,
+  },
+  playerImage: {
+    width: 140,
+    height: 140,
+    resizeMode: "contain",
+  },
+  bossWrapper: {
+    position: "absolute",
+    right: 10,
+    top: 60,
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 2,
   },
   bossPressable: {
     width: 220,
@@ -467,6 +654,7 @@ const styles = StyleSheet.create({
   bossImage: {
     width: 220,
     height: 220,
+    resizeMode: "contain",
   },
   iconBossContainer: {
     width: 220,
@@ -477,20 +665,10 @@ const styles = StyleSheet.create({
   iconBossText: {
     fontSize: 96,
   },
-  playerWrapper: {
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 4,
-  },
-  playerImage: {
-    width: 140,
-    height: 140,
-  },
-  attackEffect: {
+  effectBase: {
     position: "absolute",
-    top: 88,
-    width: 120,
-    height: 120,
+    resizeMode: "contain",
+    zIndex: 50,
   },
   bossPressed: {
     opacity: 0.85,
@@ -500,6 +678,52 @@ const styles = StyleSheet.create({
     color: "#ddd",
     fontSize: 16,
     marginBottom: 10,
+  },
+  skillInfo: {
+    flex: 1,
+  },
+  skillLabel: {
+    color: "white",
+    fontSize: 16,
+    fontWeight: "600",
+  },
+  skillSubLabel: {
+    color: "#aaa",
+    fontSize: 13,
+    marginTop: 2,
+  },
+  bottomSkillPanel: {
+    position: "absolute",
+    left: 20,
+    right: 20,
+    bottom: 24,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    zIndex: 10,
+  },
+  skillButton: {
+    minWidth: 150,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  skillButtonReady: {
+    backgroundColor: "#f2c94c",
+  },
+  skillButtonLocked: {
+    backgroundColor: "#555",
+  },
+  skillButtonPressed: {
+    opacity: 0.85,
+  },
+  skillButtonText: {
+    color: "#111",
+    fontWeight: "700",
+    fontSize: 14,
   },
   stats: {
     color: "#aaa",

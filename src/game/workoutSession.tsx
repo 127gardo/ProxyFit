@@ -55,25 +55,39 @@ type WorkoutSessionContextType = {
   clearSession: () => void; // Removes all entries from the current session
 };
 
-// Createss the shared workout session container
+// Creates the shared workout session container
 const WorkoutSessionContext = createContext<WorkoutSessionContextType | null>(
   null,
 );
 
-// calculates XP for one session entry
-// If the entry is a strength exercise, XP is based on volume
-// Volume formula: weight x reps x sets. ex. 100 x 10 x 3 = 3000
-// Then XP becomes Math.floor(3000 / 40) = 75
+// Calculates XP for one session entry
+// If the entry is a strength exercise, XP is usually based on volume.
+// Normal volume formula: weight x reps x sets. Example: 100 x 10 x 3 = 3000.
+// Then XP becomes Math.floor(3000 / 40) = 75.
+//
+// Bodyweight exercises do not have a weight input, so they use a simpler volume-style formula:
+// reps x sets x 12. Example: 12 x 3 x 12 = 432, which becomes Math.floor(432 / 40) = 10.
 export function calculateEntryXP(entry: SessionEntry) {
   if (entry.type === "strength") {
-    // entry.weight ?? 0 means use entry.weight if it exists, otherwise use 0
-    const volume = (entry.weight ?? 0) * (entry.reps ?? 0) * (entry.sets ?? 1);
+    const reps = entry.reps ?? 0;
+    const sets = entry.sets ?? 1;
 
-    return Math.max(1, Math.floor(volume / 40)); // Math.max(1,...) gurantees at least 1 XP. Rounds down to a whole number
+    // Bodyweight exercises skip the weight input,
+    // so give them their own XP formula instead of pretending a weight was entered.
+    if (entry.weightUnit === "bodyweight") {
+      const bodyweightVolume = reps * sets * 12;
+      return Math.max(1, Math.floor(bodyweightVolume / 40));
+    }
+
+    // entry.weight ?? 0 means use entry.weight if it exists, otherwise use 0
+    const volume = (entry.weight ?? 0) * reps * sets;
+
+    return Math.max(1, Math.floor(volume / 40)); // Math.max(1,...) guarantees at least 1 XP. Rounds down to a whole number
   }
 
-  // If the entry is not strength, it falls into the cardio formula
-  // Cardio XP based on time and distance. If time = 20, and distance = 2, then 20 x 2 + 2 x 15 = 40 + 30 = 70
+  // If the entry is not strength, it falls into the cardio formula.
+  // Cardio XP is based on time and distance. If time = 20, and distance = 2,
+  // then 20 x 2 + 2 x 15 = 40 + 30 = 70.
   const cardioScore = (entry.time ?? 0) * 2 + (entry.distance ?? 0) * 15;
 
   return Math.max(1, Math.floor(cardioScore));
