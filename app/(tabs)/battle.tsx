@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   Animated,
   Image,
+  ImageBackground,
   ImageSourcePropType,
   Pressable,
   StyleSheet,
@@ -34,6 +35,8 @@ type ActiveEffectKey =
   | "lightning_big"
   | "lightning_ultimate"
   | null;
+
+const battleBackground = require("../../assets/backgrounds/battle_bg_test.png");
 
 const effectFrameMap: Record<
   Exclude<ActiveEffectKey, null>,
@@ -99,6 +102,7 @@ export default function BattleScreen() {
     width: 220,
     height: 220,
   });
+  const [isAnimatingSkill, setIsAnimatingSkill] = useState(false);
 
   const bossShake = useRef(new Animated.Value(0)).current;
   const effectIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -120,6 +124,8 @@ export default function BattleScreen() {
     Math.floor(6 + bossLevel * 1.5 * stage.hpMultiplier),
   );
 
+  const speedStat = typeof character?.speed === "number" ? character.speed : 0;
+
   function clearEffectTimers() {
     if (effectIntervalRef.current) {
       clearInterval(effectIntervalRef.current);
@@ -136,6 +142,7 @@ export default function BattleScreen() {
     clearEffectTimers();
     setActiveEffectKey(null);
     setActiveEffectFrame(null);
+    setIsAnimatingSkill(false);
   }
 
   function resetBattleState() {
@@ -293,8 +300,13 @@ export default function BattleScreen() {
     }
 
     clearEffectTimers();
+    setIsAnimatingSkill(true);
 
-    const frameDuration = Math.max(skill.frameDurationMs, 140);
+    const speedMultiplier = Math.min(speedStat * 0.015, 0.45);
+    const adjustedFrameDuration = Math.max(
+      60,
+      Math.floor(skill.frameDurationMs * (1 - speedMultiplier)),
+    );
 
     setActiveEffectSize({
       width: Math.max(skill.width, 220),
@@ -315,13 +327,13 @@ export default function BattleScreen() {
       }
 
       setActiveEffectFrame(frame);
-    }, frameDuration);
+    }, adjustedFrameDuration);
 
     effectTimeoutRef.current = setTimeout(
       () => {
         stopEffect();
       },
-      frames.length * frameDuration + 60,
+      frames.length * adjustedFrameDuration + 60,
     );
   }
 
@@ -338,7 +350,7 @@ export default function BattleScreen() {
   }
 
   function applyAttack(skill: Skill) {
-    if (!isLoaded || battleResult !== null) {
+    if (!isLoaded || battleResult !== null || isAnimatingSkill) {
       return;
     }
 
@@ -357,7 +369,7 @@ export default function BattleScreen() {
   }
 
   function attackBoss() {
-    if (!basicSkill || battleResult !== null) {
+    if (!basicSkill || battleResult !== null || isAnimatingSkill) {
       return;
     }
 
@@ -372,7 +384,12 @@ export default function BattleScreen() {
   }
 
   function useChargedSkill() {
-    if (!chargedSkill || !chargedReady || battleResult !== null) {
+    if (
+      !chargedSkill ||
+      !chargedReady ||
+      battleResult !== null ||
+      isAnimatingSkill
+    ) {
       return;
     }
 
@@ -425,7 +442,7 @@ export default function BattleScreen() {
 
   if (!isLoaded) {
     return (
-      <SafeAreaView style={styles.container}>
+      <SafeAreaView style={styles.loadingContainer}>
         <Text style={styles.loadingText}>Loading battle...</Text>
       </SafeAreaView>
     );
@@ -436,160 +453,201 @@ export default function BattleScreen() {
     : "0 / 0";
 
   return (
-    <SafeAreaView style={styles.container}>
-      <Text style={styles.title}>
-        {stage.icon ? `${stage.icon} ${stage.name}` : stage.name}
-      </Text>
-      <Text style={styles.subtitle}>Boss Level {bossLevel}</Text>
-
-      <View style={styles.section}>
-        <HealthBar current={bossHP} max={bossMaxHP} />
-        <Text style={styles.hpText}>
-          {bossHP} / {bossMaxHP}
-        </Text>
-      </View>
-
-      <Pressable
-        style={({ pressed }) => [
-          styles.battleArea,
-          pressed && battleResult === null && styles.battleAreaPressed,
-        ]}
-        onPress={attackBoss}
-        disabled={battleResult !== null}
+    <Pressable
+      style={styles.screenPressable}
+      onPress={attackBoss}
+      disabled={battleResult !== null || isAnimatingSkill}
+    >
+      <ImageBackground
+        source={battleBackground}
+        style={styles.fullScreenBackground}
+        resizeMode="cover"
       >
-        <View style={styles.playerWrapper}>
-          <Image source={sprites.player} style={styles.playerImage} />
-        </View>
+        <SafeAreaView style={styles.overlay}>
+          <View style={styles.topUi}>
+            <Text style={styles.title}>
+              {stage.icon ? `${stage.icon} ${stage.name}` : stage.name}
+            </Text>
 
-        <Animated.View
-          style={[
-            styles.bossWrapper,
-            {
-              transform: [{ translateX: bossShake }],
-            },
-          ]}
-        >
-          <View style={styles.bossPressable}>
-            {bossSprite ? (
-              <Image source={bossSprite} style={styles.bossImage} />
-            ) : (
-              <View style={styles.iconBossContainer}>
-                <Text style={styles.iconBossText}>{stage.icon ?? ""}</Text>
+            <Text style={styles.subtitle}>Boss Level {bossLevel}</Text>
+
+            <View style={styles.section}>
+              <HealthBar current={bossHP} max={bossMaxHP} />
+              <Text style={styles.hpText}>
+                {bossHP} / {bossMaxHP}
+              </Text>
+            </View>
+          </View>
+
+          <View style={styles.battleLayer}>
+            <View style={styles.playerWrapper}>
+              <Image source={sprites.player} style={styles.playerImage} />
+            </View>
+
+            <Animated.View
+              style={[
+                styles.bossWrapper,
+                {
+                  transform: [{ translateX: bossShake }],
+                },
+              ]}
+            >
+              <View style={styles.bossPressable}>
+                {bossSprite ? (
+                  <Image source={bossSprite} style={styles.bossImage} />
+                ) : (
+                  <View style={styles.iconBossContainer}>
+                    <Text style={styles.iconBossText}>{stage.icon ?? ""}</Text>
+                  </View>
+                )}
+
+                {damageNumbers.map((d) => (
+                  <DamageNumber
+                    key={d.id}
+                    damage={d.value}
+                    x={d.x}
+                    y={d.y}
+                    onComplete={() => removeDamageNumber(d.id)}
+                  />
+                ))}
               </View>
+            </Animated.View>
+
+            {effectSource !== null && activeEffectFrame !== null && (
+              <Image
+                key={`${activeEffectKey}-${activeEffectFrame}`}
+                source={effectSource}
+                style={[
+                  styles.effectBase,
+                  {
+                    left: 120,
+                    top: 180,
+                    width: activeEffectSize.width,
+                    height: activeEffectSize.height,
+                  },
+                ]}
+              />
+            )}
+          </View>
+
+          <View style={styles.bottomUi}>
+            <Text style={styles.tapHint}>
+              {battleResult === null
+                ? isAnimatingSkill
+                  ? "Playing skill animation..."
+                  : "Tap anywhere to attack"
+                : "Battle Over"}
+            </Text>
+
+            <View style={styles.section}>
+              <HealthBar current={playerHP} max={maxPlayerHP} />
+              <Text style={styles.hpText}>
+                {playerHP} / {maxPlayerHP}
+              </Text>
+              <Text style={styles.stats}>Level: {character.level}</Text>
+            </View>
+
+            {battleResult === "win" && (
+              <>
+                <Text style={styles.winText}>Victory!</Text>
+                <Pressable
+                  style={({ pressed }) => [
+                    styles.actionButton,
+                    pressed && styles.bossPressed,
+                  ]}
+                  onPress={goToNextBoss}
+                >
+                  <Text style={styles.actionButtonText}>Next Boss</Text>
+                </Pressable>
+              </>
             )}
 
-            {damageNumbers.map((d) => (
-              <DamageNumber
-                key={d.id}
-                damage={d.value}
-                x={d.x}
-                y={d.y}
-                onComplete={() => removeDamageNumber(d.id)}
-              />
-            ))}
+            {battleResult === "lose" && (
+              <>
+                <Text style={styles.loseText}>You were defeated.</Text>
+                <Pressable
+                  style={({ pressed }) => [
+                    styles.actionButton,
+                    pressed && styles.bossPressed,
+                  ]}
+                  onPress={retryBoss}
+                >
+                  <Text style={styles.actionButtonText}>Retry</Text>
+                </Pressable>
+              </>
+            )}
+
+            <View style={styles.bottomSkillPanel}>
+              <View style={styles.skillInfo}>
+                <Text style={styles.skillLabel}>Charge: {chargeProgress}</Text>
+                <Text style={styles.skillSubLabel}>
+                  {chargedSkill ? chargedSkill.name : "No charged skill"}
+                </Text>
+              </View>
+
+              <Pressable
+                style={({ pressed }) => [
+                  styles.skillButton,
+                  chargedReady
+                    ? styles.skillButtonReady
+                    : styles.skillButtonLocked,
+                  pressed &&
+                    chargedReady &&
+                    !isAnimatingSkill &&
+                    styles.skillButtonPressed,
+                ]}
+                onPress={useChargedSkill}
+                disabled={
+                  !chargedReady || battleResult !== null || isAnimatingSkill
+                }
+              >
+                <Text style={styles.skillButtonText}>
+                  {isAnimatingSkill
+                    ? "Animating..."
+                    : chargedReady
+                      ? `Use ${chargedSkill?.name ?? "Skill"}`
+                      : "Skill Not Ready"}
+                </Text>
+              </Pressable>
+            </View>
           </View>
-        </Animated.View>
-
-        {effectSource !== null && activeEffectFrame !== null && (
-          <Image
-            key={`${activeEffectKey}-${activeEffectFrame}`}
-            source={effectSource}
-            style={[
-              styles.effectBase,
-              {
-                left: 120,
-                top: 40,
-                width: activeEffectSize.width,
-                height: activeEffectSize.height,
-              },
-            ]}
-          />
-        )}
-      </Pressable>
-
-      <Text style={styles.tapHint}>
-        {battleResult === null ? "Tap anywhere to attack" : "Battle Over"}
-      </Text>
-
-      <View style={styles.section}>
-        <HealthBar current={playerHP} max={maxPlayerHP} />
-        <Text style={styles.hpText}>
-          {playerHP} / {maxPlayerHP}
-        </Text>
-        <Text style={styles.stats}>Level: {character.level}</Text>
-      </View>
-
-      {battleResult === "win" && (
-        <>
-          <Text style={styles.winText}>Victory!</Text>
-          <Pressable
-            style={({ pressed }) => [
-              styles.actionButton,
-              pressed && styles.bossPressed,
-            ]}
-            onPress={goToNextBoss}
-          >
-            <Text style={styles.actionButtonText}>Next Boss</Text>
-          </Pressable>
-        </>
-      )}
-
-      {battleResult === "lose" && (
-        <>
-          <Text style={styles.loseText}>You were defeated.</Text>
-          <Pressable
-            style={({ pressed }) => [
-              styles.actionButton,
-              pressed && styles.bossPressed,
-            ]}
-            onPress={retryBoss}
-          >
-            <Text style={styles.actionButtonText}>Retry</Text>
-          </Pressable>
-        </>
-      )}
-
-      <View style={styles.bottomSkillPanel}>
-        <View style={styles.skillInfo}>
-          <Text style={styles.skillLabel}>Charge: {chargeProgress}</Text>
-          <Text style={styles.skillSubLabel}>
-            {chargedSkill ? chargedSkill.name : "No charged skill"}
-          </Text>
-        </View>
-
-        <Pressable
-          style={({ pressed }) => [
-            styles.skillButton,
-            chargedReady ? styles.skillButtonReady : styles.skillButtonLocked,
-            pressed && chargedReady && styles.skillButtonPressed,
-          ]}
-          onPress={useChargedSkill}
-          disabled={!chargedReady || battleResult !== null}
-        >
-          <Text style={styles.skillButtonText}>
-            {chargedReady
-              ? `Use ${chargedSkill?.name ?? "Skill"}`
-              : "Skill Not Ready"}
-          </Text>
-        </Pressable>
-      </View>
-    </SafeAreaView>
+        </SafeAreaView>
+      </ImageBackground>
+    </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  screenPressable: {
+    flex: 1,
+  },
+  fullScreenBackground: {
+    flex: 1,
+  },
+  overlay: {
+    flex: 1,
+    paddingHorizontal: 20,
+    paddingTop: 10,
+    paddingBottom: 24,
+    justifyContent: "space-between",
+  },
+  loadingContainer: {
     flex: 1,
     backgroundColor: "#000",
     alignItems: "center",
-    justifyContent: "flex-start",
-    paddingHorizontal: 20,
-    paddingTop: 10,
-    paddingBottom: 110,
+    justifyContent: "center",
   },
   loadingText: {
     color: "white",
     fontSize: 20,
+  },
+  topUi: {
+    width: "100%",
+    alignItems: "center",
+  },
+  bottomUi: {
+    width: "100%",
+    alignItems: "center",
   },
   title: {
     fontSize: 32,
@@ -599,7 +657,7 @@ const styles = StyleSheet.create({
   },
   subtitle: {
     fontSize: 16,
-    color: "#aaa",
+    color: "#ddd",
     marginBottom: 20,
   },
   section: {
@@ -608,33 +666,28 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   hpText: {
-    color: "#aaa",
+    color: "#eee",
     fontSize: 15,
   },
-  battleArea: {
+  battleLayer: {
+    flex: 1,
     width: "100%",
-    height: 320,
     position: "relative",
-    marginTop: 8,
-    marginBottom: 10,
-    overflow: "hidden",
-  },
-  battleAreaPressed: {
-    opacity: 0.98,
+    justifyContent: "center",
   },
   playerWrapper: {
     position: "absolute",
     left: 10,
-    top: 140,
-    width: 140,
-    height: 140,
+    bottom: 40,
+    width: 160,
+    height: 160,
     alignItems: "center",
     justifyContent: "center",
-    zIndex: 1,
+    zIndex: 2,
   },
   playerImage: {
-    width: 140,
-    height: 140,
+    width: 160,
+    height: 160,
     resizeMode: "contain",
   },
   bossWrapper: {
@@ -643,7 +696,7 @@ const styles = StyleSheet.create({
     top: 60,
     alignItems: "center",
     justifyContent: "center",
-    zIndex: 2,
+    zIndex: 3,
   },
   bossPressable: {
     width: 220,
@@ -675,9 +728,13 @@ const styles = StyleSheet.create({
     transform: [{ scale: 0.98 }],
   },
   tapHint: {
-    color: "#ddd",
+    color: "#fff",
     fontSize: 16,
     marginBottom: 10,
+    textAlign: "center",
+    textShadowColor: "rgba(0,0,0,0.5)",
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
   },
   skillInfo: {
     flex: 1,
@@ -688,20 +745,17 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
   skillSubLabel: {
-    color: "#aaa",
+    color: "#eee",
     fontSize: 13,
     marginTop: 2,
   },
   bottomSkillPanel: {
-    position: "absolute",
-    left: 20,
-    right: 20,
-    bottom: 24,
+    width: "100%",
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     gap: 12,
-    zIndex: 10,
+    marginTop: 8,
   },
   skillButton: {
     minWidth: 150,
@@ -726,7 +780,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
   stats: {
-    color: "#aaa",
+    color: "#fff",
     fontSize: 16,
   },
   winText: {
@@ -735,6 +789,9 @@ const styles = StyleSheet.create({
     fontWeight: "bold",
     marginTop: 16,
     marginBottom: 10,
+    textShadowColor: "rgba(0,0,0,0.5)",
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
   },
   loseText: {
     color: "#ff5555",
@@ -742,6 +799,9 @@ const styles = StyleSheet.create({
     fontWeight: "bold",
     marginTop: 16,
     marginBottom: 10,
+    textShadowColor: "rgba(0,0,0,0.5)",
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
   },
   actionButton: {
     backgroundColor: "#1e90ff",
