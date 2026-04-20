@@ -1,8 +1,5 @@
-// src/game/assets.ts
-//
-// Central place for all sprite/effect image requires.
-
 import { ImageSourcePropType } from "react-native";
+import { CharacterClassId } from "./classes";
 
 export type Element = "lightning" | "fire" | "ice";
 export type SkillTier = "small" | "big" | "ultimate";
@@ -10,12 +7,37 @@ export type EffectAnchor = "player" | "boss" | "screen";
 
 export type AnimationFrames = ImageSourcePropType[];
 
+export type CharacterSpriteSet = {
+  idle: AnimationFrames;
+  attack: AnimationFrames;
+};
+
 type EffectLibrary = Partial<
   Record<Element, Partial<Record<SkillTier, AnimationFrames>>>
 >;
 
+const defaultCharacterFrame = require("../../assets/sprites/character.png");
+
+export const classSprites: Record<CharacterClassId, CharacterSpriteSet> = {
+  mage: {
+    idle: [defaultCharacterFrame],
+    attack: [defaultCharacterFrame],
+  },
+  warrior: {
+    idle: [defaultCharacterFrame],
+    attack: [defaultCharacterFrame],
+  },
+  archer: {
+    idle: [defaultCharacterFrame],
+    attack: [defaultCharacterFrame],
+  },
+  thief: {
+    idle: [defaultCharacterFrame],
+    attack: [defaultCharacterFrame],
+  },
+};
+
 export const sprites = {
-  player: require("../../assets/sprites/character.png"),
   bosses: {
     boss1: require("../../assets/sprites/boss1.png"),
     boss2: require("../../assets/sprites/boss2.png"),
@@ -63,4 +85,17 @@ export function getEffectFrames(
   }
 
   return [];
+}
+
+export function getClassSpriteFrames(
+  classId: CharacterClassId,
+  state: keyof CharacterSpriteSet,
+) {
+  const frames = classSprites[classId]?.[state];
+
+  if (frames && frames.length > 0) {
+    return frames;
+  }
+
+  return classSprites.mage.idle;
 }

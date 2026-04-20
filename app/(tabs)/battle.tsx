@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Animated,
+  Easing,
   Image,
   ImageBackground,
-  ImageSourcePropType,
+  LayoutChangeEvent,
   Pressable,
   StyleSheet,
   Text,
@@ -12,7 +13,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import DamageNumber from "../../src/components/DamageNumber";
 import HealthBar from "../../src/components/HealthBar";
-import { sprites } from "../../src/game/assets";
+import { getClassSpriteFrames } from "../../src/game/assets";
 import {
   BattleResult,
   createInitialBattleProgress,
@@ -21,7 +22,8 @@ import {
 } from "../../src/game/battleProgress";
 import { calculateBossHP, getBossStage } from "../../src/game/bosses";
 import { useCharacter } from "../../src/game/character";
-import { getBasicSkill, getChargedSkill, Skill } from "../../src/game/skills";
+import { getCharacterClass } from "../../src/game/classes";
+import { Skill, SkillVisual, getFramesForVisual } from "../../src/game/skills";
 
 type DamageInstance = {
   id: number;
@@ -30,119 +32,183 @@ type DamageInstance = {
   y: number;
 };
 
-type ActiveEffectKey =
-  | "lightning_small"
-  | "lightning_big"
-  | "lightning_ultimate"
-  | null;
-
-const battleBackground = require("../../assets/backgrounds/battle_bg_test.png");
-
-const effectFrameMap: Record<
-  Exclude<ActiveEffectKey, null>,
-  ImageSourcePropType[]
-> = {
-  lightning_small: [
-    require("../../assets/effects/skills/lightnining_small_0.png"),
-    require("../../assets/effects/skills/lightnining_small_1.png"),
-    require("../../assets/effects/skills/lightnining_small_2.png"),
-    require("../../assets/effects/skills/lightnining_small_3.png"),
-  ],
-  lightning_big: [
-    require("../../assets/effects/skills/lightnining_big_0.png"),
-    require("../../assets/effects/skills/lightnining_big_1.png"),
-    require("../../assets/effects/skills/lightnining_big_2.png"),
-    require("../../assets/effects/skills/lightnining_big_3.png"),
-  ],
-  lightning_ultimate: [
-    require("../../assets/effects/skills/lightnining_big_0.png"),
-    require("../../assets/effects/skills/lightnining_big_1.png"),
-    require("../../assets/effects/skills/lightnining_big_2.png"),
-    require("../../assets/effects/skills/lightnining_big_3.png"),
-  ],
+type BattleLayerSize = {
+  width: number;
+  height: number;
 };
 
-function getEffectKeyForSkill(skill: Skill): ActiveEffectKey {
-  if (skill.element === "lightning" && skill.tier === "small") {
-    return "lightning_small";
-  }
-  if (skill.element === "lightning" && skill.tier === "big") {
-    return "lightning_big";
-  }
-  if (skill.element === "lightning" && skill.tier === "ultimate") {
-    return "lightning_ultimate";
-  }
-  return null;
-}
+type AnchorPoint = {
+  x: number;
+  y: number;
+};
+
+type ActiveVisualEffect = {
+  id: string;
+  visual: SkillVisual;
+  frames: ReturnType<typeof getFramesForVisual>;
+  frameIndex: number;
+  width: number;
+  height: number;
+  left: number;
+  top: number;
+  rotationDeg?: number;
+};
+
+const PLAYER_LAYOUT = {
+  left: 10,
+  bottom: 40,
+  width: 160,
+  height: 160,
+};
+
+const BOSS_LAYOUT = {
+  right: 10,
+  top: 60,
+  width: 220,
+  height: 220,
+};
 
 export default function BattleScreen() {
-  const { character, calculateDamage, calculateMaxHP, resetVersion } =
-    useCharacter();
+  const {
+    character,
+    calculateDamage,
+    calculateMaxHP,
+    calculateAttackCooldownMs,
+    getEquippedSkill,
+    resetVersion,
+  } = useCharacter();
 
   const [isLoaded, setIsLoaded] = useState(false);
-
-  const initialBossHP = calculateBossHP(1);
-  const initialPlayerHP = calculateMaxHP();
-
   const [bossLevel, setBossLevel] = useState(1);
-  const [bossMaxHP, setBossMaxHP] = useState(initialBossHP);
-  const [bossHP, setBossHP] = useState(initialBossHP);
-  const [playerHP, setPlayerHP] = useState(initialPlayerHP);
+  const [bossMaxHP, setBossMaxHP] = useState(calculateBossHP(1));
+  const [bossHP, setBossHP] = useState(calculateBossHP(1));
+  const [playerHP, setPlayerHP] = useState(calculateMaxHP());
   const [damageNumbers, setDamageNumbers] = useState<DamageInstance[]>([]);
   const [battleResult, setBattleResult] = useState<BattleResult>(null);
-
   const [basicHitCount, setBasicHitCount] = useState(0);
   const [chargedReady, setChargedReady] = useState(false);
-
-  const [activeEffectKey, setActiveEffectKey] = useState<ActiveEffectKey>(null);
-  const [activeEffectFrame, setActiveEffectFrame] = useState<number | null>(
-    null,
-  );
-  const [activeEffectSize, setActiveEffectSize] = useState({
-    width: 220,
-    height: 220,
-  });
+  const [activeEffects, setActiveEffects] = useState<ActiveVisualEffect[]>([]);
   const [isAnimatingSkill, setIsAnimatingSkill] = useState(false);
+  const [isRecovering, setIsRecovering] = useState(false);
+  const [battleLayerSize, setBattleLayerSize] = useState<BattleLayerSize>({
+    width: 0,
+    height: 0,
+  });
+  const [playerSpriteIndex, setPlayerSpriteIndex] = useState(0);
+  const [isPlayerAttacking, setIsPlayerAttacking] = useState(false);
 
   const bossShake = useRef(new Animated.Value(0)).current;
-  const effectIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const effectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const playerSwing = useRef(new Animated.Value(0)).current;
+  const timeoutRefs = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const intervalRefs = useRef<ReturnType<typeof setInterval>[]>([]);
   const hasHandledInitialResetVersion = useRef(false);
 
   const stage = getBossStage(bossLevel);
   const bossSprite = stage.sprite;
-
+  const battleBackground = stage.background;
   const maxPlayerHP = calculateMaxHP();
-
-  const basicSkill = getBasicSkill();
-  const chargedSkill = getChargedSkill();
-
+  const basicSkill = getEquippedSkill("basic");
+  const chargedSkill = getEquippedSkill("charged");
   const chargedHitsRequired = chargedSkill?.hitsRequired ?? 5;
-
+  const isInputLocked =
+    battleResult !== null || isAnimatingSkill || isRecovering;
   const bossAttackDamage = Math.max(
     5,
     Math.floor(6 + bossLevel * 1.5 * stage.hpMultiplier),
   );
+  const classDefinition = getCharacterClass(character.classId);
+  const idleFrames = getClassSpriteFrames(character.classId, "idle");
+  const attackFrames = getClassSpriteFrames(character.classId, "attack");
+  const currentPlayerFrames = isPlayerAttacking ? attackFrames : idleFrames;
+  const playerSpriteSource =
+    currentPlayerFrames[playerSpriteIndex] ?? currentPlayerFrames[0];
 
-  const speedStat = typeof character?.speed === "number" ? character.speed : 0;
+  const playerTransform = {
+    transform: [
+      {
+        rotate: playerSwing.interpolate({
+          inputRange: [0, 1],
+          outputRange: [
+            "0deg",
+            `${classDefinition.swingProfile.rotationDeg}deg`,
+          ],
+        }),
+      },
+      {
+        translateX: playerSwing.interpolate({
+          inputRange: [0, 1],
+          outputRange: [0, classDefinition.swingProfile.translateX],
+        }),
+      },
+      {
+        translateY: playerSwing.interpolate({
+          inputRange: [0, 1],
+          outputRange: [0, classDefinition.swingProfile.translateY],
+        }),
+      },
+      {
+        scale: playerSwing.interpolate({
+          inputRange: [0, 1],
+          outputRange: [1, classDefinition.swingProfile.scale],
+        }),
+      },
+    ],
+  };
 
-  function clearEffectTimers() {
-    if (effectIntervalRef.current) {
-      clearInterval(effectIntervalRef.current);
-      effectIntervalRef.current = null;
-    }
+  const anchorPoints = useMemo(() => {
+    const playerCenterX = PLAYER_LAYOUT.left + PLAYER_LAYOUT.width * 0.5;
+    const playerCenterY =
+      battleLayerSize.height -
+      PLAYER_LAYOUT.bottom -
+      PLAYER_LAYOUT.height * 0.5;
+    const bossCenterX =
+      battleLayerSize.width - BOSS_LAYOUT.right - BOSS_LAYOUT.width * 0.5;
+    const bossCenterY = BOSS_LAYOUT.top + BOSS_LAYOUT.height * 0.5;
 
-    if (effectTimeoutRef.current) {
-      clearTimeout(effectTimeoutRef.current);
-      effectTimeoutRef.current = null;
-    }
+    return {
+      player: {
+        x: PLAYER_LAYOUT.left + PLAYER_LAYOUT.width * 0.72,
+        y: playerCenterY - PLAYER_LAYOUT.height * 0.12,
+      },
+      boss: {
+        x: bossCenterX,
+        y: bossCenterY - BOSS_LAYOUT.height * 0.04,
+      },
+      screen: {
+        x: battleLayerSize.width * 0.5,
+        y: battleLayerSize.height * 0.45,
+      },
+    } satisfies Record<"player" | "boss" | "screen", AnchorPoint>;
+  }, [battleLayerSize.height, battleLayerSize.width]);
+
+  function registerTimeout(callback: () => void, delayMs: number) {
+    const timeout = setTimeout(callback, delayMs);
+    timeoutRefs.current.push(timeout);
+    return timeout;
   }
 
-  function stopEffect() {
-    clearEffectTimers();
-    setActiveEffectKey(null);
-    setActiveEffectFrame(null);
+  function registerInterval(callback: () => void, delayMs: number) {
+    const interval = setInterval(callback, delayMs);
+    intervalRefs.current.push(interval);
+    return interval;
+  }
+
+  function clearAllAsyncRefs() {
+    timeoutRefs.current.forEach(clearTimeout);
+    intervalRefs.current.forEach(clearInterval);
+    timeoutRefs.current = [];
+    intervalRefs.current = [];
+  }
+
+  function clearCombatVisuals() {
+    clearAllAsyncRefs();
+    setActiveEffects([]);
     setIsAnimatingSkill(false);
+    setIsRecovering(false);
+    setIsPlayerAttacking(false);
+    setPlayerSpriteIndex(0);
+    playerSwing.stopAnimation();
+    playerSwing.setValue(0);
   }
 
   function resetBattleState() {
@@ -158,7 +224,7 @@ export default function BattleScreen() {
     setBasicHitCount(0);
     setChargedReady(false);
     bossShake.setValue(0);
-    stopEffect();
+    clearCombatVisuals();
   }
 
   useEffect(() => {
@@ -172,6 +238,7 @@ export default function BattleScreen() {
         setPlayerHP(saved.playerHP);
         setBattleResult(saved.battleResult);
       } else {
+        const initialPlayerHP = calculateMaxHP();
         const initial = createInitialBattleProgress(
           1,
           calculateBossHP(1),
@@ -189,7 +256,7 @@ export default function BattleScreen() {
     }
 
     restoreBattle();
-  }, [initialPlayerHP]);
+  }, [calculateMaxHP]);
 
   useEffect(() => {
     if (!isLoaded) {
@@ -250,9 +317,120 @@ export default function BattleScreen() {
 
   useEffect(() => {
     return () => {
-      clearEffectTimers();
+      clearAllAsyncRefs();
     };
   }, []);
+
+  function getAnchorPoint(anchor: "player" | "boss" | "screen") {
+    return anchorPoints[anchor];
+  }
+
+  function buildAnchoredEffect(visual: SkillVisual): ActiveVisualEffect | null {
+    if (!visual.anchor) {
+      return null;
+    }
+
+    const frames = getFramesForVisual(visual);
+    if (frames.length === 0) {
+      return null;
+    }
+
+    const width = visual.width ?? 180;
+    const height = visual.height ?? 180;
+    const anchorPoint = getAnchorPoint(visual.anchor);
+
+    return {
+      id: `${visual.id}-${Date.now()}-${Math.random()}`,
+      visual,
+      frames,
+      frameIndex: 0,
+      width,
+      height,
+      left: anchorPoint.x - width / 2 + (visual.offsetX ?? 0),
+      top: anchorPoint.y - height / 2 + (visual.offsetY ?? 0),
+    };
+  }
+
+  function buildBeamEffect(visual: SkillVisual): ActiveVisualEffect | null {
+    if (!visual.startAnchor || !visual.endAnchor) {
+      return null;
+    }
+
+    const frames = getFramesForVisual(visual);
+    if (frames.length === 0) {
+      return null;
+    }
+
+    const start = getAnchorPoint(visual.startAnchor);
+    const end = getAnchorPoint(visual.endAnchor);
+
+    const startX = start.x + (visual.startOffsetX ?? 0);
+    const startY = start.y + (visual.startOffsetY ?? 0);
+    const endX = end.x + (visual.endOffsetX ?? 0);
+    const endY = end.y + (visual.endOffsetY ?? 0);
+
+    const distance = Math.hypot(endX - startX, endY - startY);
+    const width = visual.followDistance
+      ? Math.max(distance, 40)
+      : (visual.width ?? 180);
+    const height = visual.thickness ?? visual.height ?? 60;
+    const midX = (startX + endX) / 2;
+    const midY = (startY + endY) / 2;
+    const angleRad = Math.atan2(endY - startY, endX - startX);
+    const rotationDeg = (angleRad * 180) / Math.PI;
+
+    return {
+      id: `${visual.id}-${Date.now()}-${Math.random()}`,
+      visual,
+      frames,
+      frameIndex: 0,
+      width,
+      height,
+      left: midX - width / 2,
+      top: midY - height / 2,
+      rotationDeg,
+    };
+  }
+
+  function addVisualEffect(visual: SkillVisual) {
+    const builtEffect =
+      visual.type === "beam"
+        ? buildBeamEffect(visual)
+        : buildAnchoredEffect(visual);
+
+    if (!builtEffect) {
+      return;
+    }
+
+    setActiveEffects((prev) => [...prev, builtEffect]);
+
+    const frameDurationBase = visual.frameDurationMs ?? 90;
+    const speedBonus = Math.min(character.speed * 0.015, 0.45);
+    const adjustedFrameDuration = Math.max(
+      60,
+      Math.floor(frameDurationBase * (1 - speedBonus)),
+    );
+
+    let frameIndex = 0;
+
+    const interval = registerInterval(() => {
+      frameIndex += 1;
+
+      if (frameIndex >= builtEffect.frames.length) {
+        clearInterval(interval);
+        setActiveEffects((prev) =>
+          prev.filter((effect) => effect.id !== builtEffect.id),
+        );
+        return;
+      }
+
+      setActiveEffects((prev) =>
+        prev.map((effect) =>
+          effect.id === builtEffect.id ? { ...effect, frameIndex } : effect,
+        ),
+      );
+    }, adjustedFrameDuration);
+  }
 
   function playBossShake() {
     Animated.sequence([
@@ -284,83 +462,117 @@ export default function BattleScreen() {
     ]).start();
   }
 
-  function playSkillEffect(skill: Skill) {
-    const effectKey = getEffectKeyForSkill(skill);
+  function playPlayerAttackAnimation() {
+    setIsPlayerAttacking(true);
+    setPlayerSpriteIndex(0);
+    playerSwing.setValue(0);
 
-    if (!effectKey) {
-      stopEffect();
-      return;
-    }
-
-    const frames = effectFrameMap[effectKey];
-
-    if (!frames.length) {
-      stopEffect();
-      return;
-    }
-
-    clearEffectTimers();
-    setIsAnimatingSkill(true);
-
-    const speedMultiplier = Math.min(speedStat * 0.015, 0.45);
-    const adjustedFrameDuration = Math.max(
-      60,
-      Math.floor(skill.frameDurationMs * (1 - speedMultiplier)),
+    const attackFramesSafe =
+      attackFrames.length > 0 ? attackFrames : idleFrames;
+    const frameStepMs = Math.max(
+      55,
+      Math.floor(
+        classDefinition.swingProfile.durationMs / attackFramesSafe.length,
+      ),
     );
 
-    setActiveEffectSize({
-      width: Math.max(skill.width, 220),
-      height: Math.max(skill.height, 220),
+    attackFramesSafe.forEach((_, index) => {
+      registerTimeout(() => {
+        setPlayerSpriteIndex(index);
+      }, index * frameStepMs);
     });
 
-    setActiveEffectKey(effectKey);
-    setActiveEffectFrame(0);
+    Animated.sequence([
+      Animated.timing(playerSwing, {
+        toValue: 1,
+        duration: classDefinition.swingProfile.durationMs,
+        easing: Easing.out(Easing.quad),
+        useNativeDriver: true,
+      }),
+      Animated.timing(playerSwing, {
+        toValue: 0,
+        duration: Math.max(
+          70,
+          Math.floor(classDefinition.swingProfile.durationMs * 0.75),
+        ),
+        easing: Easing.inOut(Easing.quad),
+        useNativeDriver: true,
+      }),
+    ]).start(() => {
+      setIsPlayerAttacking(false);
+      setPlayerSpriteIndex(0);
+    });
+  }
 
-    let frame = 0;
+  function playSkillVisuals(skill: Skill) {
+    setIsAnimatingSkill(true);
 
-    effectIntervalRef.current = setInterval(() => {
-      frame += 1;
+    const timings: number[] = [];
 
-      if (frame >= frames.length) {
-        stopEffect();
-        return;
-      }
+    for (const visual of skill.visuals) {
+      const delayMs = visual.delayMs ?? 0;
+      timings.push(delayMs);
+      registerTimeout(() => addVisualEffect(visual), delayMs);
+    }
 
-      setActiveEffectFrame(frame);
-    }, adjustedFrameDuration);
+    const latestDelay = timings.length > 0 ? Math.max(...timings) : 0;
+    const longestVisual =
+      skill.visuals.reduce((max, visual) => {
+        const frames = getFramesForVisual(visual);
+        const frameDurationBase = visual.frameDurationMs ?? 90;
+        const speedBonus = Math.min(character.speed * 0.015, 0.45);
+        const adjustedFrameDuration = Math.max(
+          60,
+          Math.floor(frameDurationBase * (1 - speedBonus)),
+        );
 
-    effectTimeoutRef.current = setTimeout(
-      () => {
-        stopEffect();
-      },
-      frames.length * adjustedFrameDuration + 60,
-    );
+        return Math.max(
+          max,
+          frames.length * adjustedFrameDuration + (visual.delayMs ?? 0),
+        );
+      }, 0) || latestDelay;
+
+    registerTimeout(() => {
+      setIsAnimatingSkill(false);
+    }, longestVisual + 40);
+  }
+
+  function startRecovery(skill: Skill) {
+    setIsRecovering(true);
+    const cooldownMs = calculateAttackCooldownMs(skill.activation);
+
+    registerTimeout(() => {
+      setIsRecovering(false);
+    }, cooldownMs);
   }
 
   function spawnDamageNumber(value: number) {
     const id = Date.now() + Math.random();
 
-    const randomX = 90 + Math.random() * 30;
-    const randomY = 90 + Math.random() * 30;
-
     setDamageNumbers((prev) => [
       ...prev,
-      { id, value, x: randomX, y: randomY },
+      {
+        id,
+        value,
+        x: 90 + Math.random() * 30,
+        y: 90 + Math.random() * 30,
+      },
     ]);
   }
 
   function applyAttack(skill: Skill) {
-    if (!isLoaded || battleResult !== null || isAnimatingSkill) {
+    if (!isLoaded || isInputLocked) {
       return;
     }
 
-    const baseDamage = calculateDamage();
-    const damage = Math.max(1, Math.floor(baseDamage * skill.damageMultiplier));
+    const damage = calculateDamage(skill);
     const newHP = Math.max(0, bossHP - damage);
 
     spawnDamageNumber(damage);
-    playSkillEffect(skill);
+    playSkillVisuals(skill);
+    playPlayerAttackAnimation();
     playBossShake();
+    startRecovery(skill);
     setBossHP(newHP);
 
     if (newHP <= 0) {
@@ -369,7 +581,7 @@ export default function BattleScreen() {
   }
 
   function attackBoss() {
-    if (!basicSkill || battleResult !== null || isAnimatingSkill) {
+    if (!basicSkill || isInputLocked) {
       return;
     }
 
@@ -384,12 +596,7 @@ export default function BattleScreen() {
   }
 
   function useChargedSkill() {
-    if (
-      !chargedSkill ||
-      !chargedReady ||
-      battleResult !== null ||
-      isAnimatingSkill
-    ) {
+    if (!chargedSkill || !chargedReady || isInputLocked) {
       return;
     }
 
@@ -399,7 +606,9 @@ export default function BattleScreen() {
   }
 
   function removeDamageNumber(id: number) {
-    setDamageNumbers((prev) => prev.filter((d) => d.id !== id));
+    setDamageNumbers((prev) =>
+      prev.filter((damageNumber) => damageNumber.id !== id),
+    );
   }
 
   function goToNextBoss() {
@@ -415,7 +624,7 @@ export default function BattleScreen() {
     setBasicHitCount(0);
     setChargedReady(false);
     bossShake.setValue(0);
-    stopEffect();
+    clearCombatVisuals();
   }
 
   function retryBoss() {
@@ -429,16 +638,13 @@ export default function BattleScreen() {
     setBasicHitCount(0);
     setChargedReady(false);
     bossShake.setValue(0);
-    stopEffect();
+    clearCombatVisuals();
   }
 
-  const effectSource =
-    activeEffectKey !== null &&
-    activeEffectFrame !== null &&
-    activeEffectFrame >= 0 &&
-    activeEffectFrame < effectFrameMap[activeEffectKey].length
-      ? effectFrameMap[activeEffectKey][activeEffectFrame]
-      : null;
+  function handleBattleLayerLayout(event: LayoutChangeEvent) {
+    const { width, height } = event.nativeEvent.layout;
+    setBattleLayerSize({ width, height });
+  }
 
   if (!isLoaded) {
     return (
@@ -447,10 +653,6 @@ export default function BattleScreen() {
       </SafeAreaView>
     );
   }
-
-  const chargeProgress = chargedSkill
-    ? `${Math.min(basicHitCount, chargedHitsRequired)} / ${chargedHitsRequired}`
-    : "0 / 0";
 
   return (
     <Pressable
@@ -468,7 +670,6 @@ export default function BattleScreen() {
             <Text style={styles.title}>
               {stage.icon ? `${stage.icon} ${stage.name}` : stage.name}
             </Text>
-
             <Text style={styles.subtitle}>Boss Level {bossLevel}</Text>
 
             <View style={styles.section}>
@@ -479,10 +680,10 @@ export default function BattleScreen() {
             </View>
           </View>
 
-          <View style={styles.battleLayer}>
-            <View style={styles.playerWrapper}>
-              <Image source={sprites.player} style={styles.playerImage} />
-            </View>
+          <View style={styles.battleLayer} onLayout={handleBattleLayerLayout}>
+            <Animated.View style={[styles.playerWrapper, playerTransform]}>
+              <Image source={playerSpriteSource} style={styles.playerImage} />
+            </Animated.View>
 
             <Animated.View
               style={[
@@ -501,33 +702,41 @@ export default function BattleScreen() {
                   </View>
                 )}
 
-                {damageNumbers.map((d) => (
+                {damageNumbers.map((damageNumber) => (
                   <DamageNumber
-                    key={d.id}
-                    damage={d.value}
-                    x={d.x}
-                    y={d.y}
-                    onComplete={() => removeDamageNumber(d.id)}
+                    key={damageNumber.id}
+                    damage={damageNumber.value}
+                    x={damageNumber.x}
+                    y={damageNumber.y}
+                    onComplete={() => removeDamageNumber(damageNumber.id)}
                   />
                 ))}
               </View>
             </Animated.View>
 
-            {effectSource !== null && activeEffectFrame !== null && (
-              <Image
-                key={`${activeEffectKey}-${activeEffectFrame}`}
-                source={effectSource}
-                style={[
-                  styles.effectBase,
-                  {
-                    left: 120,
-                    top: 180,
-                    width: activeEffectSize.width,
-                    height: activeEffectSize.height,
-                  },
-                ]}
-              />
-            )}
+            {activeEffects.map((effect) => {
+              const source =
+                effect.frames[effect.frameIndex] ?? effect.frames[0];
+
+              return (
+                <Image
+                  key={effect.id}
+                  source={source}
+                  style={[
+                    styles.effectBase,
+                    {
+                      left: effect.left,
+                      top: effect.top,
+                      width: effect.width,
+                      height: effect.height,
+                      transform: effect.rotationDeg
+                        ? [{ rotate: `${effect.rotationDeg}deg` }]
+                        : undefined,
+                    },
+                  ]}
+                />
+              );
+            })}
           </View>
 
           <View style={styles.bottomUi}>
@@ -535,7 +744,9 @@ export default function BattleScreen() {
               {battleResult === null
                 ? isAnimatingSkill
                   ? "Playing skill animation..."
-                  : "Tap anywhere to attack"
+                  : isRecovering
+                    ? "Recovering..."
+                    : "Tap anywhere to attack"
                 : "Battle Over"}
             </Text>
 
@@ -545,6 +756,13 @@ export default function BattleScreen() {
                 {playerHP} / {maxPlayerHP}
               </Text>
               <Text style={styles.stats}>Level: {character.level}</Text>
+              <Text style={styles.stats}>Class: {classDefinition.name}</Text>
+              <Text style={styles.stats}>
+                Basic: {basicSkill?.name ?? "None"}
+              </Text>
+              <Text style={styles.stats}>
+                Charged: {chargedSkill?.name ?? "None"}
+              </Text>
             </View>
 
             {battleResult === "win" && (
@@ -553,7 +771,7 @@ export default function BattleScreen() {
                 <Pressable
                   style={({ pressed }) => [
                     styles.actionButton,
-                    pressed && styles.bossPressed,
+                    pressed && styles.buttonPressed,
                   ]}
                   onPress={goToNextBoss}
                 >
@@ -568,7 +786,7 @@ export default function BattleScreen() {
                 <Pressable
                   style={({ pressed }) => [
                     styles.actionButton,
-                    pressed && styles.bossPressed,
+                    pressed && styles.buttonPressed,
                   ]}
                   onPress={retryBoss}
                 >
@@ -579,7 +797,10 @@ export default function BattleScreen() {
 
             <View style={styles.bottomSkillPanel}>
               <View style={styles.skillInfo}>
-                <Text style={styles.skillLabel}>Charge: {chargeProgress}</Text>
+                <Text style={styles.skillLabel}>
+                  Charge: {Math.min(basicHitCount, chargedHitsRequired)} /{" "}
+                  {chargedHitsRequired}
+                </Text>
                 <Text style={styles.skillSubLabel}>
                   {chargedSkill ? chargedSkill.name : "No charged skill"}
                 </Text>
@@ -593,17 +814,15 @@ export default function BattleScreen() {
                     : styles.skillButtonLocked,
                   pressed &&
                     chargedReady &&
-                    !isAnimatingSkill &&
-                    styles.skillButtonPressed,
+                    !isInputLocked &&
+                    styles.buttonPressed,
                 ]}
                 onPress={useChargedSkill}
-                disabled={
-                  !chargedReady || battleResult !== null || isAnimatingSkill
-                }
+                disabled={!chargedReady || isInputLocked}
               >
                 <Text style={styles.skillButtonText}>
-                  {isAnimatingSkill
-                    ? "Animating..."
+                  {isAnimatingSkill || isRecovering
+                    ? "Locked"
                     : chargedReady
                       ? `Use ${chargedSkill?.name ?? "Skill"}`
                       : "Skill Not Ready"}
@@ -677,41 +896,41 @@ const styles = StyleSheet.create({
   },
   playerWrapper: {
     position: "absolute",
-    left: 10,
-    bottom: 40,
-    width: 160,
-    height: 160,
+    left: PLAYER_LAYOUT.left,
+    bottom: PLAYER_LAYOUT.bottom,
+    width: PLAYER_LAYOUT.width,
+    height: PLAYER_LAYOUT.height,
     alignItems: "center",
     justifyContent: "center",
-    zIndex: 2,
+    zIndex: 5,
   },
   playerImage: {
-    width: 160,
-    height: 160,
+    width: PLAYER_LAYOUT.width,
+    height: PLAYER_LAYOUT.height,
     resizeMode: "contain",
   },
   bossWrapper: {
     position: "absolute",
-    right: 10,
-    top: 60,
+    right: BOSS_LAYOUT.right,
+    top: BOSS_LAYOUT.top,
     alignItems: "center",
     justifyContent: "center",
-    zIndex: 3,
+    zIndex: 4,
   },
   bossPressable: {
-    width: 220,
-    height: 220,
+    width: BOSS_LAYOUT.width,
+    height: BOSS_LAYOUT.height,
     alignItems: "center",
     justifyContent: "center",
   },
   bossImage: {
-    width: 220,
-    height: 220,
+    width: BOSS_LAYOUT.width,
+    height: BOSS_LAYOUT.height,
     resizeMode: "contain",
   },
   iconBossContainer: {
-    width: 220,
-    height: 220,
+    width: BOSS_LAYOUT.width,
+    height: BOSS_LAYOUT.height,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -721,11 +940,7 @@ const styles = StyleSheet.create({
   effectBase: {
     position: "absolute",
     resizeMode: "contain",
-    zIndex: 50,
-  },
-  bossPressed: {
-    opacity: 0.85,
-    transform: [{ scale: 0.98 }],
+    zIndex: 6,
   },
   tapHint: {
     color: "#fff",
@@ -771,8 +986,9 @@ const styles = StyleSheet.create({
   skillButtonLocked: {
     backgroundColor: "#555",
   },
-  skillButtonPressed: {
+  buttonPressed: {
     opacity: 0.85,
+    transform: [{ scale: 0.98 }],
   },
   skillButtonText: {
     color: "#111",

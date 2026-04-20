@@ -1,50 +1,96 @@
-// This file manages player stats, XP, leveling, damage, max HP, reset logic, and saving progress
-// Every screen that needs player info calls useCharacter() from here.
 import React, { createContext, useContext, useEffect, useState } from "react";
+import { CharacterClassId, DEFAULT_CLASS_ID } from "./classes";
+import {
+  Skill,
+  SkillActivation,
+  getSkillById,
+  normalizeEquippedSkills,
+} from "./skills";
 import { loadCharacter, saveCharacter } from "./storage";
 
 export type CharacterStat = "strength" | "endurance" | "speed";
 
-// Defines what a character looks like
 export type Character = {
   level: number;
   xp: number;
   strength: number;
   endurance: number;
   speed: number;
+  classId: CharacterClassId;
+  unlockedSkillIds: string[];
+  equippedBasicSkillId: string | null;
+  equippedChargedSkillId: string | null;
 };
 
-// Starting character build
 export const INITIAL_CHARACTER: Character = {
   level: 1,
   xp: 0,
   strength: 1,
   endurance: 1,
   speed: 1,
+  classId: DEFAULT_CLASS_ID,
+  unlockedSkillIds: ["mage_spark", "mage_thunder_burst"],
+  equippedBasicSkillId: "mage_spark",
+  equippedChargedSkillId: "mage_thunder_burst",
 };
 
-// Describes everything the context provides
-// Anything inside this type is available through useCharacter()
 type CharacterContextType = {
-  character: Character; // Current stats
-  updateCharacter: (character: Character) => void; // Change stats
+  character: Character;
+  updateCharacter: (character: Character) => void;
   resetCharacter: () => void;
-  calculateDamage: () => number; // Attack damage
-  calculateMaxHP: () => number; // Player HP
-  resetVersion: number; // Tells other screens reset happened
+  setCharacterClass: (classId: CharacterClassId) => void;
+  equipSkill: (skillId: string) => void;
+  getEquippedSkill: (activation: SkillActivation) => Skill | null;
+  calculateDamage: (skill?: Skill | null) => number;
+  calculateMaxHP: () => number;
+  calculateAttackCooldownMs: (activation: SkillActivation) => number;
+  resetVersion: number;
 };
 
-// Creates the shared state container
 const CharacterContext = createContext<CharacterContextType | null>(null);
 
-// Calculates leveling difficulty
-// ex. lvl 1, 100 xp needed. lvl 2, 216 xp needed.
 export function getXPNeededForLevel(level: number) {
   return Math.floor(100 * Math.pow(level, 1.35));
 }
 
-// Processes workout rewards
-// ex. strength: +20, endurance: +15, speed: +10
+function normalizeCharacter(
+  partialCharacter: Partial<Character> | null | undefined,
+) {
+  const mergedCharacter: Character = {
+    ...INITIAL_CHARACTER,
+    ...partialCharacter,
+    classId:
+      partialCharacter?.classId &&
+      ["mage", "warrior", "archer", "thief"].includes(partialCharacter.classId)
+        ? partialCharacter.classId
+        : INITIAL_CHARACTER.classId,
+    unlockedSkillIds: Array.isArray(partialCharacter?.unlockedSkillIds)
+      ? partialCharacter.unlockedSkillIds
+      : INITIAL_CHARACTER.unlockedSkillIds,
+    equippedBasicSkillId:
+      partialCharacter?.equippedBasicSkillId ??
+      INITIAL_CHARACTER.equippedBasicSkillId,
+    equippedChargedSkillId:
+      partialCharacter?.equippedChargedSkillId ??
+      INITIAL_CHARACTER.equippedChargedSkillId,
+  };
+
+  const normalizedSkills = normalizeEquippedSkills({
+    classId: mergedCharacter.classId,
+    level: mergedCharacter.level,
+    unlockedSkillIds: mergedCharacter.unlockedSkillIds,
+    equippedBasicSkillId: mergedCharacter.equippedBasicSkillId,
+    equippedChargedSkillId: mergedCharacter.equippedChargedSkillId,
+  });
+
+  return {
+    ...mergedCharacter,
+    unlockedSkillIds: normalizedSkills.unlockedSkillIds,
+    equippedBasicSkillId: normalizedSkills.equippedBasicSkillId,
+    equippedChargedSkillId: normalizedSkills.equippedChargedSkillId,
+  };
+}
+
 export function applyStatRewards(
   character: Character,
   rewards: Record<CharacterStat, number>,
@@ -54,21 +100,19 @@ export function applyStatRewards(
   let newStrength = character.strength;
   let newEndurance = character.endurance;
   let newSpeed = character.speed;
-  let levelsGained = 0; // Tracks how many levels were earned in one workout
+  let levelsGained = 0;
 
-  // Defines the order in which rewards are processed
   const statOrder: CharacterStat[] = ["strength", "endurance", "speed"];
 
-  // Loop through strength, edurance, and speed
-  // ex. If reward exists -> use it. Otherwise -> 0
   for (const stat of statOrder) {
     const amount = rewards[stat] ?? 0;
 
-    if (amount <= 0) continue; // If no XP for that stat, skip it
+    if (amount <= 0) {
+      continue;
+    }
 
     newXP += amount;
 
-    // As long as the player has enough XP to level up, keep leveling
     while (newXP >= getXPNeededForLevel(newLevel)) {
       newXP -= getXPNeededForLevel(newLevel);
       newLevel += 1;
@@ -80,79 +124,146 @@ export function applyStatRewards(
     }
   }
 
-  // Returns results and updates the character state
+  const updatedCharacter = normalizeCharacter({
+    ...character,
+    level: newLevel,
+    xp: newXP,
+    strength: newStrength,
+    endurance: newEndurance,
+    speed: newSpeed,
+  });
+
   return {
-    character: {
-      level: newLevel,
-      xp: newXP,
-      strength: newStrength,
-      endurance: newEndurance,
-      speed: newSpeed,
-    },
+    character: updatedCharacter,
     levelsGained,
     totalXpGained:
       (rewards.strength ?? 0) + (rewards.endurance ?? 0) + (rewards.speed ?? 0),
   };
 }
 
-// Entire app is wrapped with this provider so everything inside can access character data
 export function CharacterProvider({ children }: { children: React.ReactNode }) {
-  const [character, setCharacter] = useState<Character>(INITIAL_CHARACTER); // Stores current character
-  const [resetVersion, setResetVersion] = useState(0); // When reset happens, other screens detect that and reset themselves
+  const [character, setCharacter] = useState<Character>(INITIAL_CHARACTER);
+  const [resetVersion, setResetVersion] = useState(0);
 
-  // Loads saved character. Runs once when the app starts.
   useEffect(() => {
     async function loadSave() {
       const savedCharacter = await loadCharacter();
 
       if (savedCharacter) {
-        setCharacter(savedCharacter);
+        setCharacter(normalizeCharacter(savedCharacter));
       }
     }
 
     loadSave();
   }, []);
 
-  // Whenever character changes, progress is always saved automatically
   useEffect(() => {
     saveCharacter(character);
   }, [character]);
 
-  // Function to replace the character state
   function updateCharacter(updatedCharacter: Character) {
-    setCharacter(updatedCharacter);
+    setCharacter(normalizeCharacter(updatedCharacter));
   }
 
-  // Character becomes level 1 again
-  // other screens see resetVersion increase, then reset themselves
   function resetCharacter() {
     setCharacter(INITIAL_CHARACTER);
     setResetVersion((prev) => prev + 1);
   }
 
-  // Calculates character damage.
-  // ex. 1 strength = 5 damage. 5 strength = 25 damage.
-  function calculateDamage() {
-    return character.strength * 5;
+  function setCharacterClass(classId: CharacterClassId) {
+    setCharacter((prev) =>
+      normalizeCharacter({
+        ...prev,
+        classId,
+        unlockedSkillIds: [],
+        equippedBasicSkillId: null,
+        equippedChargedSkillId: null,
+      }),
+    );
   }
 
-  // Caluculates character HP
-  // base HP = 100
-  // +20 HP per endurance
+  function equipSkill(skillId: string) {
+    setCharacter((prev) => {
+      const skill = getSkillById(skillId);
+
+      if (!skill) {
+        return prev;
+      }
+
+      if (skill.classId !== prev.classId) {
+        return prev;
+      }
+
+      if (!prev.unlockedSkillIds.includes(skill.id)) {
+        return prev;
+      }
+
+      if (skill.activation === "basic") {
+        return normalizeCharacter({
+          ...prev,
+          equippedBasicSkillId: skill.id,
+        });
+      }
+
+      return normalizeCharacter({
+        ...prev,
+        equippedChargedSkillId: skill.id,
+      });
+    });
+  }
+
+  function getEquippedSkill(activation: SkillActivation) {
+    const skillId =
+      activation === "basic"
+        ? character.equippedBasicSkillId
+        : character.equippedChargedSkillId;
+
+    if (!skillId) {
+      return null;
+    }
+
+    return getSkillById(skillId);
+  }
+
+  function calculateDamage(skill?: Skill | null) {
+    const baseDamage = character.strength * 5;
+
+    if (!skill) {
+      return baseDamage;
+    }
+
+    return Math.max(1, Math.floor(baseDamage * skill.damageMultiplier));
+  }
+
   function calculateMaxHP() {
     return 100 + character.endurance * 20;
   }
 
-  // Exposes everything inside to the rest of the app
-  // Screens can call const { character, calculateDamage } = useCharacter()
+  function calculateAttackCooldownMs(activation: SkillActivation) {
+    const baseCooldown = activation === "basic" ? 650 : 1100;
+    const speedReduction = Math.min(
+      character.speed * 18,
+      activation === "basic" ? 320 : 420,
+    );
+
+    return Math.max(
+      activation === "basic" ? 220 : 420,
+      baseCooldown - speedReduction,
+    );
+  }
+
   return (
     <CharacterContext.Provider
       value={{
         character,
         updateCharacter,
         resetCharacter,
+        setCharacterClass,
+        equipSkill,
+        getEquippedSkill,
         calculateDamage,
         calculateMaxHP,
+        calculateAttackCooldownMs,
         resetVersion,
       }}
     >
@@ -161,8 +272,6 @@ export function CharacterProvider({ children }: { children: React.ReactNode }) {
   );
 }
 
-// This is a custom hook
-// Instead of writing useContext(CharacterContext), just use useCharacter()
 export function useCharacter() {
   const context = useContext(CharacterContext);
 
