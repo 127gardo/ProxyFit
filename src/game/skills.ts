@@ -4,6 +4,11 @@ import { CharacterClassId } from "./classes";
 export type SkillActivation = "basic" | "charged";
 export type SkillVisualType = "anchored" | "beam";
 
+// One visual piece that plays during a skill.
+// A single skill can have more than one visual.
+// Example:
+// - a small spark at the player's hand
+// - then a hit effect on the boss
 export type SkillVisual = {
   id: string;
   type: SkillVisualType;
@@ -26,6 +31,7 @@ export type SkillVisual = {
   followDistance?: boolean;
 };
 
+// This is one skill the player can equip.
 export type Skill = {
   id: string;
   classId: CharacterClassId;
@@ -37,6 +43,10 @@ export type Skill = {
   visuals: SkillVisual[];
 };
 
+// For now, every class gets only 2 skills total.
+// - 1 basic attack
+// - 1 charged attack
+
 export const skills: Skill[] = [
   {
     id: "mage_spark",
@@ -46,10 +56,11 @@ export const skills: Skill[] = [
     damageMultiplier: 1,
     unlockLevel: 1,
     visuals: [
+      // Small cast effect near the player.
       {
         id: "mage_spark_cast",
         type: "anchored",
-        element: "lightning",
+        element: "thunder_proc",
         tier: "small",
         anchor: "player",
         offsetX: 38,
@@ -58,10 +69,11 @@ export const skills: Skill[] = [
         height: 110,
         frameDurationMs: 95,
       },
+      // Small hit effect on the boss.
       {
         id: "mage_spark_hit",
         type: "anchored",
-        element: "lightning",
+        element: "thunder",
         tier: "small",
         anchor: "boss",
         offsetX: 0,
@@ -82,6 +94,7 @@ export const skills: Skill[] = [
     hitsRequired: 5,
     unlockLevel: 1,
     visuals: [
+      // Charge-up effect by the player.
       {
         id: "mage_burst_cast",
         type: "anchored",
@@ -94,6 +107,7 @@ export const skills: Skill[] = [
         height: 130,
         frameDurationMs: 85,
       },
+      // Traveling beam from player to boss.
       {
         id: "mage_burst_beam",
         type: "beam",
@@ -110,6 +124,7 @@ export const skills: Skill[] = [
         delayMs: 35,
         followDistance: true,
       },
+      // Big hit on the boss.
       {
         id: "mage_burst_hit",
         type: "anchored",
@@ -126,99 +141,9 @@ export const skills: Skill[] = [
     ],
   },
   {
-    id: "mage_arc_lance",
-    classId: "mage",
-    name: "Arc Lance",
-    activation: "basic",
-    damageMultiplier: 1.6,
-    unlockLevel: 10,
-    visuals: [
-      {
-        id: "mage_arc_lance_cast",
-        type: "anchored",
-        element: "lightning",
-        tier: "small",
-        anchor: "player",
-        offsetX: 42,
-        offsetY: -34,
-        width: 120,
-        height: 120,
-        frameDurationMs: 85,
-      },
-      {
-        id: "mage_arc_lance_beam",
-        type: "beam",
-        element: "lightning",
-        tier: "small",
-        startAnchor: "player",
-        endAnchor: "boss",
-        startOffsetX: 46,
-        startOffsetY: -32,
-        endOffsetX: -6,
-        endOffsetY: -10,
-        thickness: 70,
-        frameDurationMs: 65,
-        delayMs: 25,
-        followDistance: true,
-      },
-    ],
-  },
-  {
-    id: "mage_storm_lance",
-    classId: "mage",
-    name: "Storm Lance",
-    activation: "charged",
-    damageMultiplier: 4.2,
-    hitsRequired: 5,
-    unlockLevel: 10,
-    visuals: [
-      {
-        id: "mage_storm_lance_cast",
-        type: "anchored",
-        element: "lightning",
-        tier: "big",
-        anchor: "player",
-        offsetX: 34,
-        offsetY: -32,
-        width: 145,
-        height: 145,
-        frameDurationMs: 70,
-      },
-      {
-        id: "mage_storm_lance_beam",
-        type: "beam",
-        element: "lightning",
-        tier: "ultimate",
-        startAnchor: "player",
-        endAnchor: "boss",
-        startOffsetX: 46,
-        startOffsetY: -34,
-        endOffsetX: -6,
-        endOffsetY: -12,
-        thickness: 100,
-        frameDurationMs: 58,
-        delayMs: 20,
-        followDistance: true,
-      },
-      {
-        id: "mage_storm_lance_hit",
-        type: "anchored",
-        element: "lightning",
-        tier: "ultimate",
-        anchor: "boss",
-        offsetX: 6,
-        offsetY: -22,
-        width: 260,
-        height: 260,
-        frameDurationMs: 60,
-        delayMs: 45,
-      },
-    ],
-  },
-  {
-    id: "warrior_slash",
+    id: "axe_swing",
     classId: "warrior",
-    name: "Slash",
+    name: "Carnage",
     activation: "basic",
     damageMultiplier: 1.15,
     unlockLevel: 1,
@@ -226,8 +151,8 @@ export const skills: Skill[] = [
       {
         id: "warrior_slash_hit",
         type: "anchored",
-        element: "lightning",
-        tier: "small",
+        element: "axe",
+        tier: "swing",
         anchor: "boss",
         offsetX: -14,
         offsetY: 8,
@@ -261,76 +186,18 @@ export const skills: Skill[] = [
     ],
   },
   {
-    id: "warrior_cross_cut",
-    classId: "warrior",
-    name: "Cross Cut",
-    activation: "basic",
-    damageMultiplier: 1.7,
-    unlockLevel: 10,
-    visuals: [
-      {
-        id: "warrior_cross_cut_hit_1",
-        type: "anchored",
-        element: "lightning",
-        tier: "small",
-        anchor: "boss",
-        offsetX: -18,
-        offsetY: 4,
-        width: 190,
-        height: 190,
-        frameDurationMs: 75,
-      },
-      {
-        id: "warrior_cross_cut_hit_2",
-        type: "anchored",
-        element: "lightning",
-        tier: "small",
-        anchor: "boss",
-        offsetX: 12,
-        offsetY: -16,
-        width: 190,
-        height: 190,
-        frameDurationMs: 75,
-        delayMs: 55,
-      },
-    ],
-  },
-  {
-    id: "warrior_titan_break",
-    classId: "warrior",
-    name: "Titan Break",
-    activation: "charged",
-    damageMultiplier: 4.4,
-    hitsRequired: 5,
-    unlockLevel: 10,
-    visuals: [
-      {
-        id: "warrior_titan_break_hit",
-        type: "anchored",
-        element: "lightning",
-        tier: "ultimate",
-        anchor: "boss",
-        offsetX: 0,
-        offsetY: -12,
-        width: 250,
-        height: 250,
-        frameDurationMs: 62,
-      },
-    ],
-  },
-  {
-    id: "archer_quick_shot",
+    id: "archer_arrow_rain",
     classId: "archer",
-    name: "Quick Shot",
+    name: "Arrow Rain",
     activation: "basic",
     damageMultiplier: 1,
     unlockLevel: 1,
     visuals: [
       {
-        id: "archer_quick_shot_beam",
-        type: "beam",
-        element: "lightning",
-        tier: "small",
+        id: "archer_arrow_rain",
+        type: "anchored",
+        element: "arrow",
+        tier: "proc",
         startAnchor: "player",
         endAnchor: "boss",
         startOffsetX: 42,
@@ -338,14 +205,14 @@ export const skills: Skill[] = [
         endOffsetX: -12,
         endOffsetY: -16,
         thickness: 48,
-        frameDurationMs: 62,
+        frameDurationMs: 52,
         followDistance: true,
       },
       {
         id: "archer_quick_shot_hit",
         type: "anchored",
-        element: "lightning",
-        tier: "small",
+        element: "arrow",
+        tier: "proc",
         anchor: "boss",
         offsetX: 12,
         offsetY: -18,
@@ -396,82 +263,18 @@ export const skills: Skill[] = [
     ],
   },
   {
-    id: "archer_arc_shot",
-    classId: "archer",
-    name: "Arc Shot",
-    activation: "basic",
-    damageMultiplier: 1.55,
-    unlockLevel: 10,
-    visuals: [
-      {
-        id: "archer_arc_shot_beam",
-        type: "beam",
-        element: "lightning",
-        tier: "small",
-        startAnchor: "player",
-        endAnchor: "boss",
-        startOffsetX: 42,
-        startOffsetY: -26,
-        endOffsetX: 10,
-        endOffsetY: -26,
-        thickness: 55,
-        frameDurationMs: 56,
-        followDistance: true,
-      },
-    ],
-  },
-  {
-    id: "archer_starfall_barrage",
-    classId: "archer",
-    name: "Starfall Barrage",
-    activation: "charged",
-    damageMultiplier: 4.1,
-    hitsRequired: 5,
-    unlockLevel: 10,
-    visuals: [
-      {
-        id: "archer_starfall_beam",
-        type: "beam",
-        element: "lightning",
-        tier: "ultimate",
-        startAnchor: "player",
-        endAnchor: "boss",
-        startOffsetX: 42,
-        startOffsetY: -24,
-        endOffsetX: 18,
-        endOffsetY: -24,
-        thickness: 78,
-        frameDurationMs: 52,
-        followDistance: true,
-      },
-      {
-        id: "archer_starfall_hit",
-        type: "anchored",
-        element: "lightning",
-        tier: "ultimate",
-        anchor: "boss",
-        offsetX: 16,
-        offsetY: -24,
-        width: 250,
-        height: 250,
-        frameDurationMs: 56,
-        delayMs: 35,
-      },
-    ],
-  },
-  {
-    id: "thief_quick_stab",
+    id: "boomerang",
     classId: "thief",
-    name: "Quick Stab",
+    name: "Boomerang",
     activation: "basic",
     damageMultiplier: 0.95,
     unlockLevel: 1,
     visuals: [
       {
-        id: "thief_quick_stab_hit",
+        id: "boomerang_hit",
         type: "anchored",
-        element: "lightning",
-        tier: "small",
+        element: "boomerang",
+        tier: "proc",
         anchor: "boss",
         offsetX: 2,
         offsetY: 8,
@@ -514,64 +317,6 @@ export const skills: Skill[] = [
         height: 210,
         frameDurationMs: 65,
         delayMs: 45,
-      },
-    ],
-  },
-  {
-    id: "thief_blur_step",
-    classId: "thief",
-    name: "Blur Step",
-    activation: "basic",
-    damageMultiplier: 1.45,
-    unlockLevel: 10,
-    visuals: [
-      {
-        id: "thief_blur_step_hit",
-        type: "anchored",
-        element: "lightning",
-        tier: "small",
-        anchor: "boss",
-        offsetX: 6,
-        offsetY: 4,
-        width: 190,
-        height: 190,
-        frameDurationMs: 62,
-      },
-    ],
-  },
-  {
-    id: "thief_night_frenzy",
-    classId: "thief",
-    name: "Night Frenzy",
-    activation: "charged",
-    damageMultiplier: 3.8,
-    hitsRequired: 4,
-    unlockLevel: 10,
-    visuals: [
-      {
-        id: "thief_night_frenzy_hit_1",
-        type: "anchored",
-        element: "lightning",
-        tier: "big",
-        anchor: "boss",
-        offsetX: -12,
-        offsetY: 10,
-        width: 210,
-        height: 210,
-        frameDurationMs: 58,
-      },
-      {
-        id: "thief_night_frenzy_hit_2",
-        type: "anchored",
-        element: "lightning",
-        tier: "ultimate",
-        anchor: "boss",
-        offsetX: 14,
-        offsetY: -8,
-        width: 240,
-        height: 240,
-        frameDurationMs: 58,
-        delayMs: 38,
       },
     ],
   },

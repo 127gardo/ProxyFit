@@ -18,17 +18,14 @@ export default function HomeScreen() {
   return (
     <View style={styles.container}>
       <Text style={styles.title}>ProxyFit</Text>
-      <Text style={styles.subtitle}>
-        Train in real life. Fight in the game.
-      </Text>
 
       <View style={styles.heroCard}>
         <Text style={styles.heroIcon}>{evolution.icon}</Text>
-        <Text style={styles.heroRank}>{evolution.name}</Text>
+        {/* <Text style={styles.heroRank}>{evolution.name}</Text> */}
         <Text style={styles.heroLevel}>Level {character.level}</Text>
-        <Text style={styles.heroClass}>
+        {/* <Text style={styles.heroClass}>
           {activeClass.icon} {activeClass.name}
-        </Text>
+        </Text> */}
       </View>
 
       <View style={styles.statsGrid}>
@@ -56,14 +53,14 @@ export default function HomeScreen() {
       <View style={styles.summaryCard}>
         <Text style={styles.summaryTitle}>Today</Text>
         <Text style={styles.summaryText}>Workouts logged: {todayCount}</Text>
-        <Text style={styles.summaryText}>Current form: {evolution.name}</Text>
-        <Text style={styles.summaryText}>Class: {activeClass.name}</Text>
-        <Text style={styles.summaryText}>
+        {/* <Text style={styles.summaryText}>Current form: {evolution.name}</Text> */}
+        {/* <Text style={styles.summaryText}>Class: {activeClass.name}</Text> */}
+        {/* <Text style={styles.summaryText}>
           Basic Skill: {basicSkill?.name ?? "None"}
-        </Text>
-        <Text style={styles.summaryText}>
+        </Text> */}
+        {/* <Text style={styles.summaryText}>
           Charged Skill: {chargedSkill?.name ?? "None"}
-        </Text>
+        </Text> */}
       </View>
     </View>
   );
