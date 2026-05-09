@@ -1,38 +1,76 @@
-// This file saves and loads the character
-
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
-// AsyncStorage stores data as key -> value
-// example: PROXYFIT_CHARACTER -> "{level: 5, strength: 10}"
-const CHARACTER_KEY = "PROXYFIT_CHARACTER";
+/*
+  This file handles local saves on the phone.
 
-// export means other files can import and use it
-// character:any means the function accepts some value named character. The type "any" means "dont check this too strictly"
-export async function saveCharacter(character: any) {
+  Important idea:
+
+  Before login, the app used one shared save key like this:
+
+    PROXYFIT_CHARACTER
+
+  That means every account on the same phone saw the same character.
+
+  Now we attach the Supabase user ID to the key:
+
+    PROXYFIT_CHARACTER:abc-user-id
+
+  So each logged-in account gets its own local save on the same device.
+*/
+
+const CHARACTER_KEY = "PROXYFIT_CHARACTER";
+const WORKOUT_HISTORY_KEY = "PROXYFIT_WORKOUT_HISTORY";
+
+function getUserKey(baseKey: string, userId: string) {
+  return `${baseKey}:${userId}`;
+}
+
+export async function saveCharacter(character: any, userId: string) {
   try {
-    // Can't store objects directly, so convert to string first
     const json = JSON.stringify(character);
-    // AsyncStorage.setItem writes the data
-    await AsyncStorage.setItem(CHARACTER_KEY, json);
+    await AsyncStorage.setItem(getUserKey(CHARACTER_KEY, userId), json);
   } catch (error) {
     console.log("Error saving character:", error);
   }
 }
 
-// Retreieve saved data
-export async function loadCharacter() {
+export async function loadCharacter(userId: string) {
   try {
-    const json = await AsyncStorage.getItem(CHARACTER_KEY);
+    const json = await AsyncStorage.getItem(getUserKey(CHARACTER_KEY, userId));
 
-    // If data exists, convert back to object
-    if (json != null) {
+    if (json) {
       return JSON.parse(json);
     }
 
-    // If no save, return null
     return null;
   } catch (error) {
     console.log("Error loading character:", error);
+    return null;
+  }
+}
+
+export async function saveWorkoutHistory(workoutDays: any[], userId: string) {
+  try {
+    const json = JSON.stringify(workoutDays);
+    await AsyncStorage.setItem(getUserKey(WORKOUT_HISTORY_KEY, userId), json);
+  } catch (error) {
+    console.log("Error saving workout history:", error);
+  }
+}
+
+export async function loadWorkoutHistory(userId: string) {
+  try {
+    const json = await AsyncStorage.getItem(
+      getUserKey(WORKOUT_HISTORY_KEY, userId),
+    );
+
+    if (json) {
+      return JSON.parse(json);
+    }
+
+    return null;
+  } catch (error) {
+    console.log("Error loading workout history:", error);
     return null;
   }
 }

@@ -8,6 +8,7 @@ import {
   Text,
   View,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 
 import {
   getExercisesByMuscles,
@@ -143,7 +144,7 @@ export default function WorkoutScreen() {
   );
 
   return (
-    <View style={styles.screen}>
+    <SafeAreaView style={styles.screen}>
       {/* 
         Temporary pulse overlays.
         These only appear during milestone animations and then fade away.
@@ -297,7 +298,7 @@ export default function WorkoutScreen() {
           </Text>
         </Pressable>
       </ScrollView>
-    </View>
+    </SafeAreaView>
   );
 }
 

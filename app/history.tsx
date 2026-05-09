@@ -1,10 +1,11 @@
-import { ScrollView, StyleSheet, Text, View } from "react-native";
+import { router } from "expo-router";
+import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import {
   useWorkoutHistory,
   WorkoutDay,
   WorkoutEntry,
 } from "../src/game/workoutHistory";
-
 export default function HistoryScreen() {
   const { workoutDays } = useWorkoutHistory();
 
@@ -21,29 +22,46 @@ export default function HistoryScreen() {
   }
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <Text style={styles.title}>Workout History</Text>
+    <SafeAreaView style={styles.safeArea}>
+      <ScrollView
+        style={styles.container}
+        contentContainerStyle={styles.content}
+      >
+        <Pressable onPress={() => router.back()} style={styles.backButton}>
+          <Text style={styles.backButtonText}>← Back</Text>
+        </Pressable>
+        <Text style={styles.title}>Workout History</Text>
+        {workoutDays.length === 0 ? (
+          <Text style={styles.emptyText}>No workouts logged yet.</Text>
+        ) : (
+          workoutDays.map((day: WorkoutDay) => (
+            <View key={day.date} style={styles.dayCard}>
+              <Text style={styles.dayTitle}>{day.date}</Text>
 
-      {workoutDays.length === 0 ? (
-        <Text style={styles.emptyText}>No workouts logged yet.</Text>
-      ) : (
-        workoutDays.map((day: WorkoutDay) => (
-          <View key={day.date} style={styles.dayCard}>
-            <Text style={styles.dayTitle}>{day.date}</Text>
-
-            {day.entries.map((entry: WorkoutEntry) => (
-              <View key={entry.id} style={styles.entryRow}>
-                <Text style={styles.entryText}>{formatEntry(entry)}</Text>
-              </View>
-            ))}
-          </View>
-        ))
-      )}
-    </ScrollView>
+              {day.entries.map((entry: WorkoutEntry) => (
+                <View key={entry.id} style={styles.entryRow}>
+                  <Text style={styles.entryText}>{formatEntry(entry)}</Text>
+                </View>
+              ))}
+            </View>
+          ))
+        )}
+      </ScrollView>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
+  backButton: {
+    marginBottom: 16,
+    alignSelf: "flex-start",
+  },
+
+  backButtonText: {
+    color: "#4da3ff",
+    fontSize: 18,
+    fontWeight: "bold",
+  },
   container: {
     flex: 1,
     backgroundColor: "#000",
@@ -88,5 +106,9 @@ const styles = StyleSheet.create({
   entryText: {
     color: "white",
     fontSize: 15,
+  },
+  safeArea: {
+    flex: 1,
+    backgroundColor: "#000",
   },
 });

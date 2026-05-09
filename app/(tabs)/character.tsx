@@ -6,6 +6,8 @@ import {
   Text,
   View,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
+import { useAuth } from "../../src/auth/AuthProvider";
 import { clearBattleProgress } from "../../src/game/battleProgress";
 import { useCharacter } from "../../src/game/character";
 import { characterClasses, getCharacterClass } from "../../src/game/classes";
@@ -13,7 +15,6 @@ import { getEvolution } from "../../src/game/evolution";
 import { getSkillById, getUnlockedSkillsForClass } from "../../src/game/skills";
 import { useWorkoutHistory } from "../../src/game/workoutHistory";
 import { useWorkoutSession } from "../../src/game/workoutSession";
-
 export default function CharacterScreen() {
   const {
     character,
@@ -22,24 +23,31 @@ export default function CharacterScreen() {
     setCharacterClass,
     equipSkill,
   } = useCharacter();
+
+  const { signOut } = useAuth();
   const { clearWorkoutHistory } = useWorkoutHistory();
   const { clearSession } = useWorkoutSession();
 
   const evolution = getEvolution(character.level);
   const activeClass = getCharacterClass(character.classId);
+
   const unlockedSkills = getUnlockedSkillsForClass(
     character.classId,
     character.level,
   );
+
   const basicSkills = unlockedSkills.filter(
     (skill) => skill.activation === "basic",
   );
+
   const chargedSkills = unlockedSkills.filter(
     (skill) => skill.activation === "charged",
   );
+
   const equippedBasicSkill = character.equippedBasicSkillId
     ? getSkillById(character.equippedBasicSkillId)
     : null;
+
   const equippedChargedSkill = character.equippedChargedSkillId
     ? getSkillById(character.equippedChargedSkillId)
     : null;
@@ -49,10 +57,7 @@ export default function CharacterScreen() {
       "Reset Progress",
       "This will erase your character progress, workout history, current workout session, and saved boss battle progress. This cannot be undone.",
       [
-        {
-          text: "Cancel",
-          style: "cancel",
-        },
+        { text: "Cancel", style: "cancel" },
         {
           text: "Reset",
           style: "destructive",
@@ -68,133 +73,151 @@ export default function CharacterScreen() {
   }
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <Text style={styles.title}>Your Proxy</Text>
-
-      <View style={styles.heroCard}>
-        <Text style={styles.icon}>{evolution.icon}</Text>
-        <Text style={styles.rank}>{evolution.name}</Text>
-        <Text style={styles.classLine}>
-          {activeClass.icon} {activeClass.name}
-        </Text>
-      </View>
-
-      <View style={styles.statsBox}>
-        <Text style={styles.stat}>Level: {character.level}</Text>
-        <Text style={styles.stat}>Strength: {character.strength}</Text>
-        <Text style={styles.stat}>Endurance: {character.endurance}</Text>
-        <Text style={styles.stat}>Speed: {character.speed}</Text>
-        <Text style={styles.stat}>Damage: {calculateDamage()}</Text>
-        <Text style={styles.stat}>
-          Basic Skill: {equippedBasicSkill?.name ?? "None"}
-        </Text>
-        <Text style={styles.stat}>
-          Charged Skill: {equippedChargedSkill?.name ?? "None"}
-        </Text>
-      </View>
-
-      <View style={styles.panel}>
-        <Text style={styles.panelTitle}>Choose Class</Text>
-        {characterClasses.map((characterClass) => {
-          const isSelected = character.classId === characterClass.id;
-
-          return (
-            <Pressable
-              key={characterClass.id}
-              style={({ pressed }) => [
-                styles.classCard,
-                isSelected && styles.classCardSelected,
-                pressed && styles.buttonPressed,
-              ]}
-              onPress={() => setCharacterClass(characterClass.id)}
-            >
-              <Text style={styles.className}>
-                {characterClass.icon} {characterClass.name}
-              </Text>
-              <Text style={styles.classDescription}>
-                {characterClass.description}
-              </Text>
-              <Text style={styles.classStatus}>
-                {isSelected ? "Currently equipped" : "Tap to switch class"}
-              </Text>
-            </Pressable>
-          );
-        })}
-      </View>
-
-      <View style={styles.panel}>
-        <Text style={styles.panelTitle}>Equip Basic Skill</Text>
-        {basicSkills.map((skill) => {
-          const isEquipped = character.equippedBasicSkillId === skill.id;
-
-          return (
-            <Pressable
-              key={skill.id}
-              style={({ pressed }) => [
-                styles.skillCard,
-                isEquipped && styles.skillCardSelected,
-                pressed && styles.buttonPressed,
-              ]}
-              onPress={() => equipSkill(skill.id)}
-            >
-              <Text style={styles.skillName}>{skill.name}</Text>
-              <Text style={styles.skillMeta}>
-                Unlock level: {skill.unlockLevel}
-              </Text>
-              <Text style={styles.skillMeta}>
-                Damage multiplier: {skill.damageMultiplier.toFixed(2)}x
-              </Text>
-              <Text style={styles.skillMeta}>
-                {isEquipped ? "Equipped as basic" : "Tap to equip"}
-              </Text>
-            </Pressable>
-          );
-        })}
-      </View>
-
-      <View style={styles.panel}>
-        <Text style={styles.panelTitle}>Equip Charged Skill</Text>
-        {chargedSkills.map((skill) => {
-          const isEquipped = character.equippedChargedSkillId === skill.id;
-
-          return (
-            <Pressable
-              key={skill.id}
-              style={({ pressed }) => [
-                styles.skillCard,
-                isEquipped && styles.skillCardSelected,
-                pressed && styles.buttonPressed,
-              ]}
-              onPress={() => equipSkill(skill.id)}
-            >
-              <Text style={styles.skillName}>{skill.name}</Text>
-              <Text style={styles.skillMeta}>
-                Unlock level: {skill.unlockLevel}
-              </Text>
-              <Text style={styles.skillMeta}>
-                Damage multiplier: {skill.damageMultiplier.toFixed(2)}x
-              </Text>
-              <Text style={styles.skillMeta}>
-                Hits needed: {skill.hitsRequired ?? 5}
-              </Text>
-              <Text style={styles.skillMeta}>
-                {isEquipped ? "Equipped as charged" : "Tap to equip"}
-              </Text>
-            </Pressable>
-          );
-        })}
-      </View>
-
-      <Pressable
-        style={({ pressed }) => [
-          styles.resetButton,
-          pressed && styles.buttonPressed,
-        ]}
-        onPress={confirmReset}
+    <SafeAreaView style={styles.safeArea}>
+      <ScrollView
+        style={styles.container}
+        contentContainerStyle={styles.content}
       >
-        <Text style={styles.resetButtonText}>Reset Progress</Text>
-      </Pressable>
-    </ScrollView>
+        <Text style={styles.title}>Your Proxy</Text>
+
+        <View style={styles.heroCard}>
+          <Text style={styles.icon}>{evolution.icon}</Text>
+          <Text style={styles.rank}>{evolution.name}</Text>
+          <Text style={styles.classLine}>
+            {activeClass.icon} {activeClass.name}
+          </Text>
+        </View>
+
+        <View style={styles.statsBox}>
+          <Text style={styles.stat}>Level: {character.level}</Text>
+          <Text style={styles.stat}>Strength: {character.strength}</Text>
+          <Text style={styles.stat}>Endurance: {character.endurance}</Text>
+          <Text style={styles.stat}>Speed: {character.speed}</Text>
+          <Text style={styles.stat}>Damage: {calculateDamage()}</Text>
+          <Text style={styles.stat}>
+            Basic Skill: {equippedBasicSkill?.name ?? "None"}
+          </Text>
+          <Text style={styles.stat}>
+            Charged Skill: {equippedChargedSkill?.name ?? "None"}
+          </Text>
+        </View>
+
+        <View style={styles.panel}>
+          <Text style={styles.panelTitle}>Choose Class</Text>
+
+          {characterClasses.map((characterClass) => {
+            const isSelected = character.classId === characterClass.id;
+
+            return (
+              <Pressable
+                key={characterClass.id}
+                style={({ pressed }) => [
+                  styles.classCard,
+                  isSelected && styles.classCardSelected,
+                  pressed && styles.buttonPressed,
+                ]}
+                onPress={() => setCharacterClass(characterClass.id)}
+              >
+                <Text style={styles.className}>
+                  {characterClass.icon} {characterClass.name}
+                </Text>
+                <Text style={styles.classDescription}>
+                  {characterClass.description}
+                </Text>
+                <Text style={styles.classStatus}>
+                  {isSelected ? "Currently equipped" : "Tap to switch class"}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+
+        <View style={styles.panel}>
+          <Text style={styles.panelTitle}>Equip Basic Skill</Text>
+
+          {basicSkills.map((skill) => {
+            const isEquipped = character.equippedBasicSkillId === skill.id;
+
+            return (
+              <Pressable
+                key={skill.id}
+                style={({ pressed }) => [
+                  styles.skillCard,
+                  isEquipped && styles.skillCardSelected,
+                  pressed && styles.buttonPressed,
+                ]}
+                onPress={() => equipSkill(skill.id)}
+              >
+                <Text style={styles.skillName}>{skill.name}</Text>
+                <Text style={styles.skillMeta}>
+                  Unlock level: {skill.unlockLevel}
+                </Text>
+                <Text style={styles.skillMeta}>
+                  Damage multiplier: {skill.damageMultiplier.toFixed(2)}x
+                </Text>
+                <Text style={styles.skillMeta}>
+                  {isEquipped ? "Equipped as basic" : "Tap to equip"}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+
+        <View style={styles.panel}>
+          <Text style={styles.panelTitle}>Equip Charged Skill</Text>
+
+          {chargedSkills.map((skill) => {
+            const isEquipped = character.equippedChargedSkillId === skill.id;
+
+            return (
+              <Pressable
+                key={skill.id}
+                style={({ pressed }) => [
+                  styles.skillCard,
+                  isEquipped && styles.skillCardSelected,
+                  pressed && styles.buttonPressed,
+                ]}
+                onPress={() => equipSkill(skill.id)}
+              >
+                <Text style={styles.skillName}>{skill.name}</Text>
+                <Text style={styles.skillMeta}>
+                  Unlock level: {skill.unlockLevel}
+                </Text>
+                <Text style={styles.skillMeta}>
+                  Damage multiplier: {skill.damageMultiplier.toFixed(2)}x
+                </Text>
+                <Text style={styles.skillMeta}>
+                  Hits needed: {skill.hitsRequired ?? 5}
+                </Text>
+                <Text style={styles.skillMeta}>
+                  {isEquipped ? "Equipped as charged" : "Tap to equip"}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+
+        <Pressable
+          style={({ pressed }) => [
+            styles.logoutButton,
+            pressed && styles.buttonPressed,
+          ]}
+          onPress={signOut}
+        >
+          <Text style={styles.logoutButtonText}>Logout</Text>
+        </Pressable>
+
+        <Pressable
+          style={({ pressed }) => [
+            styles.resetButton,
+            pressed && styles.buttonPressed,
+          ]}
+          onPress={confirmReset}
+        >
+          <Text style={styles.resetButtonText}>Reset Progress</Text>
+        </Pressable>
+      </ScrollView>
+    </SafeAreaView>
   );
 }
 
@@ -283,6 +306,10 @@ const styles = StyleSheet.create({
     color: "#8ec5ff",
     fontSize: 14,
   },
+  safeArea: {
+    flex: 1,
+    backgroundColor: "#000",
+  },
   skillCard: {
     backgroundColor: "#1a1a1a",
     borderRadius: 12,
@@ -306,8 +333,21 @@ const styles = StyleSheet.create({
     fontSize: 14,
     marginBottom: 4,
   },
-  resetButton: {
+  logoutButton: {
     marginTop: 6,
+    backgroundColor: "#333",
+    paddingVertical: 14,
+    paddingHorizontal: 24,
+    borderRadius: 10,
+    marginBottom: 12,
+  },
+  logoutButtonText: {
+    color: "white",
+    fontSize: 17,
+    fontWeight: "bold",
+    textAlign: "center",
+  },
+  resetButton: {
     backgroundColor: "#8b0000",
     paddingVertical: 14,
     paddingHorizontal: 24,

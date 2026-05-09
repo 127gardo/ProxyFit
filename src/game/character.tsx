@@ -1,5 +1,7 @@
 import React, { createContext, useContext, useEffect, useState } from "react";
+import { useAuth } from "../auth/AuthProvider";
 import { CharacterClassId, DEFAULT_CLASS_ID } from "./classes";
+import { loadCloudCharacter, saveCloudCharacter } from "./cloudSave";
 import {
   Skill,
   SkillActivation,
@@ -8,11 +10,8 @@ import {
 } from "./skills";
 import { loadCharacter, saveCharacter } from "./storage";
 
-// These are the 3 stats your character can grow with workouts.
 export type CharacterStat = "strength" | "endurance" | "speed";
 
-// This is the shape of your character data.
-// Think of this like the "player save file" structure.
 export type Character = {
   level: number;
   xp: number;
@@ -25,8 +24,6 @@ export type Character = {
   equippedChargedSkillId: string | null;
 };
 
-// This is the very first version of the player.
-// If there is no saved data yet, the game starts here.
 export const INITIAL_CHARACTER: Character = {
   level: 1,
   xp: 0,
@@ -39,7 +36,6 @@ export const INITIAL_CHARACTER: Character = {
   equippedChargedSkillId: "mage_thunder_burst",
 };
 
-// This describes everything the app can grab from the character system.
 type CharacterContextType = {
   character: Character;
   updateCharacter: (character: Character) => void;
@@ -53,19 +49,12 @@ type CharacterContextType = {
   resetVersion: number;
 };
 
-// This is the shared "box" where character data lives.
 const CharacterContext = createContext<CharacterContextType | null>(null);
 
-// This tells us how much XP is needed for a level.
-// Higher levels need more XP.
 export function getXPNeededForLevel(level: number) {
   return Math.floor(100 * Math.pow(level, 1.35));
 }
 
-// This makes sure character data is valid.
-// In simple words:
-// if old save data is missing something or looks weird,
-// we clean it up and fill in safe defaults.
 function normalizeCharacter(
   partialCharacter: Partial<Character> | null | undefined,
 ) {
@@ -88,8 +77,6 @@ function normalizeCharacter(
       INITIAL_CHARACTER.equippedChargedSkillId,
   };
 
-  // This helper makes sure equipped skills actually make sense
-  // for the class, unlock level, and unlocked skill list.
   const normalizedSkills = normalizeEquippedSkills({
     classId: mergedCharacter.classId,
     level: mergedCharacter.level,
@@ -106,8 +93,6 @@ function normalizeCharacter(
   };
 }
 
-// This applies workout rewards to the character.
-// It adds XP, checks for level ups, and increases stats.
 export function applyStatRewards(
   character: Character,
   rewards: Record<CharacterStat, number>,
@@ -119,34 +104,28 @@ export function applyStatRewards(
   let newSpeed = character.speed;
   let levelsGained = 0;
 
-  // We go through rewards in this order.
   const statOrder: CharacterStat[] = ["strength", "endurance", "speed"];
 
   for (const stat of statOrder) {
     const amount = rewards[stat] ?? 0;
 
-    // Skip stats with no reward.
     if (amount <= 0) {
       continue;
     }
 
-    // Add XP from this reward.
     newXP += amount;
 
-    // Keep leveling up while enough XP exists.
     while (newXP >= getXPNeededForLevel(newLevel)) {
       newXP -= getXPNeededForLevel(newLevel);
       newLevel += 1;
       levelsGained += 1;
 
-      // Give stat points depending on what type of workout reward this was.
       if (stat === "strength") newStrength += 2;
       if (stat === "endurance") newEndurance += 2;
       if (stat === "speed") newSpeed += 2;
     }
   }
 
-  // Clean up the final character so skills stay valid too.
   const updatedCharacter = normalizeCharacter({
     ...character,
     level: newLevel,
@@ -164,45 +143,94 @@ export function applyStatRewards(
   };
 }
 
-// This provider wraps the app so all screens can use the same character data.
 export function CharacterProvider({ children }: { children: React.ReactNode }) {
-  const [character, setCharacter] = useState<Character>(INITIAL_CHARACTER);
+  const { user } = useAuth();
 
-  // This number increases when the character gets fully reset.
-  // Other screens can watch this and react to it.
+  const [character, setCharacter] = useState<Character>(INITIAL_CHARACTER);
   const [resetVersion, setResetVersion] = useState(0);
 
-  // When the app starts, try to load saved character data.
-  useEffect(() => {
-    async function loadSave() {
-      const savedCharacter = await loadCharacter();
+  /*
+    This prevents a dangerous bug.
 
-      if (savedCharacter) {
-        setCharacter(normalizeCharacter(savedCharacter));
+    Without this flag, the app could save INITIAL_CHARACTER before it finishes
+    loading the user's real saved character.
+  */
+  const [hasLoadedForUser, setHasLoadedForUser] = useState(false);
+
+  useEffect(() => {
+    async function loadSaveForCurrentUser() {
+      if (!user?.id) {
+        setCharacter(INITIAL_CHARACTER);
+        setHasLoadedForUser(false);
+        return;
       }
+
+      setHasLoadedForUser(false);
+
+      /*
+        Reset immediately so Account B does not temporarily keep seeing
+        Account A's character while the app is loading.
+      */
+      setCharacter(INITIAL_CHARACTER);
+
+      /*
+        First load the phone save.
+
+        This makes the app work offline.
+      */
+      const localCharacter = await loadCharacter(user.id);
+
+      if (localCharacter) {
+        setCharacter(normalizeCharacter(localCharacter));
+      }
+
+      /*
+        Then try cloud save.
+
+        If cloud data exists, it becomes the main save and updates the phone.
+      */
+      const cloudCharacter = await loadCloudCharacter(user.id);
+
+      if (cloudCharacter) {
+        const normalizedCloudCharacter = normalizeCharacter(cloudCharacter);
+        setCharacter(normalizedCloudCharacter);
+        await saveCharacter(normalizedCloudCharacter, user.id);
+      } else if (localCharacter) {
+        /*
+          If this account has a local save but no cloud save yet,
+          upload the local save to Supabase.
+        */
+        await saveCloudCharacter(user.id, normalizeCharacter(localCharacter));
+      }
+
+      setHasLoadedForUser(true);
     }
 
-    loadSave();
-  }, []);
+    loadSaveForCurrentUser();
+  }, [user?.id]);
 
-  // Anytime the character changes, save it.
   useEffect(() => {
-    saveCharacter(character);
-  }, [character]);
+    async function saveCurrentCharacter() {
+      if (!user?.id || !hasLoadedForUser) {
+        return;
+      }
 
-  // Replace the whole character with a new one.
+      await saveCharacter(character, user.id);
+      await saveCloudCharacter(user.id, character);
+    }
+
+    saveCurrentCharacter();
+  }, [character, user?.id, hasLoadedForUser]);
+
   function updateCharacter(updatedCharacter: Character) {
     setCharacter(normalizeCharacter(updatedCharacter));
   }
 
-  // Full reset back to the starting character.
   function resetCharacter() {
     setCharacter(INITIAL_CHARACTER);
     setResetVersion((prev) => prev + 1);
   }
 
-  // Change the player's class.
-  // We clear old class skills so the new class starts clean.
   function setCharacterClass(classId: CharacterClassId) {
     setCharacter((prev) =>
       normalizeCharacter({
@@ -215,29 +243,22 @@ export function CharacterProvider({ children }: { children: React.ReactNode }) {
     );
   }
 
-  // Equip a skill into the correct slot.
-  // Basic skills go into the basic slot.
-  // Charged skills go into the charged slot.
   function equipSkill(skillId: string) {
     setCharacter((prev) => {
       const skill = getSkillById(skillId);
 
-      // If the skill doesn't exist, do nothing.
       if (!skill) {
         return prev;
       }
 
-      // Don't allow equipping skills from another class.
       if (skill.classId !== prev.classId) {
         return prev;
       }
 
-      // Don't allow equipping a skill the player hasn't unlocked.
       if (!prev.unlockedSkillIds.includes(skill.id)) {
         return prev;
       }
 
-      // Put the skill into the correct slot.
       if (skill.activation === "basic") {
         return normalizeCharacter({
           ...prev,
@@ -252,11 +273,6 @@ export function CharacterProvider({ children }: { children: React.ReactNode }) {
     });
   }
 
-  // Get the currently equipped skill for either:
-  // - "basic"
-  // - "charged"
-  //
-  // This is the function your battle screen was crashing over.
   function getEquippedSkill(activation: SkillActivation) {
     const skillId =
       activation === "basic"
@@ -270,8 +286,6 @@ export function CharacterProvider({ children }: { children: React.ReactNode }) {
     return getSkillById(skillId);
   }
 
-  // Strength controls damage.
-  // If a skill is used, multiply damage by that skill's power.
   function calculateDamage(skill?: Skill | null) {
     const baseDamage = character.strength * 5;
 
@@ -282,13 +296,10 @@ export function CharacterProvider({ children }: { children: React.ReactNode }) {
     return Math.max(1, Math.floor(baseDamage * skill.damageMultiplier));
   }
 
-  // Endurance controls max HP.
   function calculateMaxHP() {
     return 100 + character.endurance * 20;
   }
 
-  // Speed makes attacks recover faster.
-  // Lower number = faster next attack.
   function calculateAttackCooldownMs(activation: SkillActivation) {
     const baseCooldown = activation === "basic" ? 650 : 1100;
 
@@ -323,8 +334,6 @@ export function CharacterProvider({ children }: { children: React.ReactNode }) {
   );
 }
 
-// This is the helper other files use.
-// It lets them open the shared character box.
 export function useCharacter() {
   const context = useContext(CharacterContext);
 
