@@ -1,5 +1,5 @@
 // This file is the save system for battles.
-// It now uses BOTH local storage and Supabase cloud storage.
+// It uses BOTH local storage and Supabase cloud storage.
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { supabase } from "../lib/supabase";
@@ -20,6 +20,20 @@ export type BattleSaveData = {
   bossHP: number; // Boss current HP. Changes as the player attacks.
   playerHP: number; // Player's current HP. Changes as the boss attacks.
   battleResult: BattleResult; // win, lose, or null.
+
+  /*
+    Tracks which boss levels have already paid their first-clear reward.
+
+    Example:
+    - User clears boss level 1 for the first time.
+    - They get 25 Spotter Points.
+    - "1" gets added here.
+    - If they replay/retry that boss later, they do not get paid again.
+
+    This is stored in battle progress because it belongs to story/boss progress,
+    not workout history.
+  */
+  rewardedBossLevels: number[];
 };
 
 const BATTLE_PROGRESS_KEY = "PROXYFIT_BATTLE_PROGRESS";
@@ -50,6 +64,28 @@ function getBattleProgressKey(userId: string | null) {
   return userId ? `${BATTLE_PROGRESS_KEY}:${userId}` : BATTLE_PROGRESS_KEY;
 }
 
+/*
+  Save data changes over time while you build the game.
+
+  This function makes old saves safe by filling in new fields.
+  Without this, existing users could crash after an update because their old
+  save data does not have rewardedBossLevels yet.
+*/
+function normalizeBattleSaveData(
+  data: Partial<BattleSaveData>,
+): BattleSaveData {
+  return {
+    bossLevel: data.bossLevel ?? 1,
+    bossMaxHP: data.bossMaxHP ?? 100,
+    bossHP: data.bossHP ?? data.bossMaxHP ?? 100,
+    playerHP: data.playerHP ?? 100,
+    battleResult: data.battleResult ?? null,
+    rewardedBossLevels: Array.isArray(data.rewardedBossLevels)
+      ? data.rewardedBossLevels
+      : [],
+  };
+}
+
 async function loadLocalBattleProgress(userId: string | null) {
   try {
     const saved = await AsyncStorage.getItem(getBattleProgressKey(userId));
@@ -58,7 +94,7 @@ async function loadLocalBattleProgress(userId: string | null) {
       return null;
     }
 
-    return JSON.parse(saved) as BattleSaveData;
+    return normalizeBattleSaveData(JSON.parse(saved));
   } catch (error) {
     console.log("Error loading local battle progress:", error);
     return null;
@@ -72,7 +108,7 @@ async function saveLocalBattleProgress(
   try {
     await AsyncStorage.setItem(
       getBattleProgressKey(userId),
-      JSON.stringify(data),
+      JSON.stringify(normalizeBattleSaveData(data)),
     );
   } catch (error) {
     console.log("Error saving local battle progress:", error);
@@ -107,8 +143,11 @@ export async function loadBattleProgress(): Promise<BattleSaveData | null> {
   const cloudBattleProgress = await loadCloudBattleProgress(userId);
 
   if (cloudBattleProgress) {
-    await saveLocalBattleProgress(userId, cloudBattleProgress);
-    return cloudBattleProgress;
+    const normalizedCloudBattleProgress =
+      normalizeBattleSaveData(cloudBattleProgress);
+
+    await saveLocalBattleProgress(userId, normalizedCloudBattleProgress);
+    return normalizedCloudBattleProgress;
   }
 
   /*
@@ -125,13 +164,14 @@ export async function loadBattleProgress(): Promise<BattleSaveData | null> {
 // Saves battle progress locally and to Supabase.
 export async function saveBattleProgress(data: BattleSaveData): Promise<void> {
   const userId = await getCurrentUserId();
+  const normalizedData = normalizeBattleSaveData(data);
 
   // Local save happens first so progress is protected even if internet is bad.
-  await saveLocalBattleProgress(userId, data);
+  await saveLocalBattleProgress(userId, normalizedData);
 
   // Cloud save only happens when a user is logged in.
   if (userId) {
-    await saveCloudBattleProgress(userId, data);
+    await saveCloudBattleProgress(userId, normalizedData);
   }
 }
 
@@ -158,5 +198,6 @@ export function createInitialBattleProgress(
     bossHP: bossMaxHP,
     playerHP,
     battleResult: null,
+    rewardedBossLevels: [],
   };
 }

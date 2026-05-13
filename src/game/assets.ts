@@ -10,39 +10,77 @@ export type Element =
   | "axe"
   | "arrow"
   | "arrowRain"
-  | "boomerang";
+  | "boomerang"
+  | "hammer"
+  | "mana";
 export type SkillTier =
   | "small"
   | "big"
   | "ultimate"
   | "swing"
   | "proc"
-  | "arrowRain";
+  | "arrowRain"
+  | "hammer"
+  | "mana";
 export type EffectAnchor = "player" | "boss" | "screen";
 
 export type AnimationFrames = ImageSourcePropType[];
 
-export type CharacterSpriteSet = {
+export type CharacterAnimationState =
+  | "idle"
+  | "attack"
+  | "hurt"
+  | "victory"
+  | "defeat";
+
+export type CharacterSpriteSet = Partial<
+  Record<CharacterAnimationState, AnimationFrames>
+> & {
   idle: AnimationFrames;
   attack: AnimationFrames;
+};
+
+export type BossSpriteSet = {
+  idle: AnimationFrames;
 };
 
 type EffectLibrary = Partial<
   Record<Element, Partial<Record<SkillTier, AnimationFrames>>>
 >;
 
-const defaultCharacterFrame = require("../../assets/sprites/character.png");
 const mageCharacterSprite = require("../../assets/sprites/mageSprite.png");
 const thiefCharacterSprite = require("../../assets/sprites/thiefSprite.png");
 const warriorCharacterSprite = require("../../assets/sprites/warriorSprite.png");
 const archerCharacterSprite = require("../../assets/sprites/archerSprite.png");
 
-// Character sprites.
-// For now every class uses the same placeholder image.
+/*
+  Character animation registry.
+
+  This is where you plug in character PNG frames from Aseprite.
+
+  Recommended folder idea for later:
+  assets/sprites/player/warrior/idle/idle_0.png
+  assets/sprites/player/warrior/idle/idle_1.png
+  assets/sprites/player/warrior/attack/attack_0.png
+
+  Expo/React Native needs require(...) paths to be written manually.
+  You cannot dynamically build paths like require("../../assets/" + fileName).
+*/
 export const classSprites: Record<CharacterClassId, CharacterSpriteSet> = {
   mage: {
-    idle: [mageCharacterSprite],
-    attack: [mageCharacterSprite],
+    idle: [
+      require("../../assets/sprites/characterSprites/blue/idle/blue1.png"),
+      require("../../assets/sprites/characterSprites/blue/idle/blue2.png"),
+      require("../../assets/sprites/characterSprites/blue/idle/blue3.png"),
+      require("../../assets/sprites/characterSprites/blue/idle/blue4.png"),
+      require("../../assets/sprites/characterSprites/blue/idle/blue5.png"),
+      require("../../assets/sprites/characterSprites/blue/idle/blue6.png"),
+      require("../../assets/sprites/characterSprites/blue/idle/blue7.png"),
+      require("../../assets/sprites/characterSprites/blue/idle/blue8.png"),
+    ],
+    attack: [
+      require("../../assets/sprites/characterSprites/blue/idle/blue1.png"),
+    ],
   },
   warrior: {
     idle: [warriorCharacterSprite],
@@ -53,16 +91,52 @@ export const classSprites: Record<CharacterClassId, CharacterSpriteSet> = {
     attack: [archerCharacterSprite],
   },
   thief: {
-    idle: [thiefCharacterSprite],
-    attack: [thiefCharacterSprite],
+    idle: [
+      require("../../assets/sprites/characterSprites/monkey/skill/monkey1.png"),
+      require("../../assets/sprites/characterSprites/monkey/skill/monkey2.png"),
+    ],
+    attack: [
+      require("../../assets/sprites/characterSprites/monkey/skill/monkey1.png"),
+      require("../../assets/sprites/characterSprites/monkey/skill/monkey2.png"),
+    ],
   },
 };
 
+/*
+  Boss animation registry.
+
+  For now each boss only has one idle frame, so nothing visually changes yet.
+  Once you export idle frames from Aseprite, add them here like this:
+
+  boss1: {
+    idle: [
+      require("../../assets/sprites/bosses/boss1/idle/idle_0.png"),
+      require("../../assets/sprites/bosses/boss1/idle/idle_1.png"),
+      require("../../assets/sprites/bosses/boss1/idle/idle_2.png"),
+    ],
+  }
+*/
+export const bossSprites = {
+  boss1: {
+    idle: [require("../../assets/sprites/boss1.png")],
+  },
+  boss2: {
+    idle: [require("../../assets/sprites/boss2.png")],
+  },
+  boss3: {
+    idle: [require("../../assets/sprites/boss3.png")],
+  },
+} satisfies Record<string, BossSpriteSet>;
+
+/*
+  Kept for older code that may still import sprites.bosses.boss1.
+  New battle code should prefer bossSprites because it supports animations.
+*/
 export const sprites = {
   bosses: {
-    boss1: require("../../assets/sprites/boss1.png"),
-    boss2: require("../../assets/sprites/boss2.png"),
-    boss3: require("../../assets/sprites/boss3.png"),
+    boss1: bossSprites.boss1.idle[0],
+    boss2: bossSprites.boss2.idle[0],
+    boss3: bossSprites.boss3.idle[0],
   },
 };
 
@@ -141,16 +215,42 @@ export const effectAnimations: EffectLibrary = {
       require("../../assets/effects/skills/arrowproc4.png"),
     ],
   },
-  boomerang: {
-    proc: [
-      require("../../assets/effects/skills/boomerang1.png"),
-      require("../../assets/effects/skills/boomerang2.png"),
-      require("../../assets/effects/skills/boomerang3.png"),
-      require("../../assets/effects/skills/boomerang4.png"),
-      require("../../assets/effects/skills/boomerang5.png"),
-      require("../../assets/effects/skills/boomerang6.png"),
-      require("../../assets/effects/skills/boomerang7.png"),
-      require("../../assets/effects/skills/boomerang8.png"),
+  hammer: {
+    hammer: [
+      require("../../assets/sprites/characterSprites/monkey/skill/monkey1.png"),
+      require("../../assets/sprites/characterSprites/monkey/skill/monkey2.png"),
+      require("../../assets/sprites/characterSprites/monkey/skill/monkey3.png"),
+      require("../../assets/sprites/characterSprites/monkey/skill/monkey4.png"),
+      require("../../assets/sprites/characterSprites/monkey/skill/monkey5.png"),
+      require("../../assets/sprites/characterSprites/monkey/skill/monkey6.png"),
+      require("../../assets/sprites/characterSprites/monkey/skill/monkey7.png"),
+      require("../../assets/sprites/characterSprites/monkey/skill/monkey8.png"),
+      require("../../assets/sprites/characterSprites/monkey/skill/monkey9.png"),
+    ],
+    proc: [],
+  },
+  mana: {
+    mana: [
+      require("../../assets/sprites/characterSprites/blue/skill/bluemove1.png"),
+      require("../../assets/sprites/characterSprites/blue/skill/bluemove2.png"),
+      require("../../assets/sprites/characterSprites/blue/skill/bluemove3.png"),
+      require("../../assets/sprites/characterSprites/blue/skill/bluemove4.png"),
+      require("../../assets/sprites/characterSprites/blue/skill/bluemove5.png"),
+      require("../../assets/sprites/characterSprites/blue/skill/bluemove6.png"),
+      require("../../assets/sprites/characterSprites/blue/skill/bluemove7.png"),
+      require("../../assets/sprites/characterSprites/blue/skill/bluemove8.png"),
+      require("../../assets/sprites/characterSprites/blue/skill/bluemove9.png"),
+      require("../../assets/sprites/characterSprites/blue/skill/bluemove10.png"),
+      require("../../assets/sprites/characterSprites/blue/skill/bluemove11.png"),
+      require("../../assets/sprites/characterSprites/blue/skill/bluemove12.png"),
+      require("../../assets/sprites/characterSprites/blue/skill/bluemove13.png"),
+      require("../../assets/sprites/characterSprites/blue/skill/bluemove14.png"),
+      require("../../assets/sprites/characterSprites/blue/skill/bluemove15.png"),
+      require("../../assets/sprites/characterSprites/blue/skill/bluemove16.png"),
+      require("../../assets/sprites/characterSprites/blue/skill/bluemove17.png"),
+      require("../../assets/sprites/characterSprites/blue/skill/bluemove18.png"),
+      require("../../assets/sprites/characterSprites/blue/skill/bluemove19.png"),
+      require("../../assets/sprites/characterSprites/blue/skill/bluemove20.png"),
     ],
   },
   fire: {},
@@ -185,4 +285,14 @@ export function getClassSpriteFrames(
   }
 
   return classSprites.mage.idle;
+}
+
+export function getBossSpriteFrames(
+  bossSpriteId: keyof typeof bossSprites | null | undefined,
+) {
+  if (!bossSpriteId) {
+    return [];
+  }
+
+  return bossSprites[bossSpriteId]?.idle ?? [];
 }

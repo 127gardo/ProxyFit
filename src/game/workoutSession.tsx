@@ -9,17 +9,15 @@ import React, {
 import { ExerciseStat } from "./exercises";
 import { WeightUnit } from "./workoutHistory";
 
-// Key used to save to AsyncStorage
 const WORKOUT_SESSION_KEY = "PROXYFIT_WORKOUT_SESSION";
 
-// Defines what one exercise inside the current workout session looks like
 export type SessionEntry = {
-  id: string; // Unique ID
-  exerciseId: string; // Machine-friendly identifier (bench_press)
-  exerciseName: string; // user-friendly identifier (Bench Press)
+  id: string;
+  exerciseId: string;
+  exerciseName: string;
   type: "strength" | "cardio";
-  stats: ExerciseStat[]; // Which stat this exercise trains
-  createdAt: string; // Timestamp
+  stats: ExerciseStat[];
+  createdAt: string;
   weight?: number;
   weightUnit?: WeightUnit;
   reps?: number;
@@ -28,7 +26,6 @@ export type SessionEntry = {
   distance?: number;
 };
 
-// Defined data passed in when adding a new session entry
 type AddSessionEntryInput = {
   exerciseId: string;
   exerciseName: string;
@@ -42,58 +39,80 @@ type AddSessionEntryInput = {
   distance?: number;
 };
 
-// Defines what the reward calculation returns
 type SessionRewards = {
   rewards: Record<ExerciseStat, number>;
   totalXp: number;
 };
 
-// Defines what context provides to the rest of the app. For screens that use useWorkoutSession()
 type WorkoutSessionContextType = {
-  sessionEntries: SessionEntry[]; // Exercises in the currently active workout
-  addSessionEntry: (entry: AddSessionEntryInput) => void; // Adds a new entry into current session
-  clearSession: () => void; // Removes all entries from the current session
+  sessionEntries: SessionEntry[];
+  addSessionEntry: (entry: AddSessionEntryInput) => void;
+  updateSessionEntry: (entryId: string, entry: AddSessionEntryInput) => void;
+  removeSessionEntry: (entryId: string) => void;
+  getSessionEntryById: (entryId: string) => SessionEntry | undefined;
+  clearSession: () => void;
 };
 
-// Creates the shared workout session container
 const WorkoutSessionContext = createContext<WorkoutSessionContextType | null>(
   null,
 );
 
-// Calculates XP for one session entry
-// If the entry is a strength exercise, XP is usually based on volume.
-// Normal volume formula: weight x reps x sets. Example: 100 x 10 x 3 = 3000.
-// Then XP becomes Math.floor(3000 / 40) = 75.
-//
-// Bodyweight exercises do not have a weight input, so they use a simpler volume-style formula:
-// reps x sets x 12. Example: 12 x 3 x 12 = 432, which becomes Math.floor(432 / 40) = 10.
+function createSessionEntryId() {
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+/*
+  Calculates XP/stat points for one logged exercise.
+
+  Important:
+  - This does not directly change the character.
+  - It only calculates what the exercise is worth.
+  - The complete workout screen sends the final reward bundle to CharacterProvider.
+
+  That keeps this file focused only on workout-session math.
+*/
 export function calculateEntryXP(entry: SessionEntry) {
   if (entry.type === "strength") {
     const reps = entry.reps ?? 0;
     const sets = entry.sets ?? 1;
 
-    // Bodyweight exercises skip the weight input,
-    // so give them their own XP formula instead of pretending a weight was entered.
+    /*
+      Bodyweight exercises do not have a numeric weight.
+      Instead of pretending the weight is 0, we use a simple bodyweight formula.
+    */
     if (entry.weightUnit === "bodyweight") {
       const bodyweightVolume = reps * sets * 12;
       return Math.max(1, Math.floor(bodyweightVolume / 40));
     }
 
-    // entry.weight ?? 0 means use entry.weight if it exists, otherwise use 0
+    /*
+      Weighted strength formula:
+      weight x reps x sets = total volume.
+    */
     const volume = (entry.weight ?? 0) * reps * sets;
 
-    return Math.max(1, Math.floor(volume / 40)); // Math.max(1,...) guarantees at least 1 XP. Rounds down to a whole number
+    return Math.max(1, Math.floor(volume / 40));
   }
 
-  // If the entry is not strength, it falls into the cardio formula.
-  // Cardio XP is based on time and distance. If time = 20, and distance = 2,
-  // then 20 x 2 + 2 x 15 = 40 + 30 = 70.
+  /*
+    Cardio formula:
+    time gives reliable effort credit.
+    distance gives a bonus.
+  */
   const cardioScore = (entry.time ?? 0) * 2 + (entry.distance ?? 0) * 15;
 
   return Math.max(1, Math.floor(cardioScore));
 }
 
-// Takes all entries in the current session and calculates the total rewards
+/*
+  Converts a whole workout session into stat-specific reward points.
+
+  Example:
+  - Bench Press trains ["strength"]
+  - Running trains ["speed", "endurance"]
+
+  If an exercise trains multiple stats, its points are split across those stats.
+*/
 export function calculateSessionRewards(
   entries: SessionEntry[],
 ): SessionRewards {
@@ -107,7 +126,8 @@ export function calculateSessionRewards(
 
   for (const entry of entries) {
     const baseXp = calculateEntryXP(entry);
-    const splitXp = Math.max(1, Math.floor(baseXp / entry.stats.length));
+    const statCount = Math.max(1, entry.stats.length);
+    const splitXp = Math.max(1, Math.floor(baseXp / statCount));
 
     for (const stat of entry.stats) {
       rewards[stat] += splitXp;
@@ -144,49 +164,77 @@ export function WorkoutSessionProvider({
     loadSession();
   }, []);
 
-  useEffect(() => {
-    async function saveSession() {
-      try {
-        await AsyncStorage.setItem(
-          WORKOUT_SESSION_KEY,
-          JSON.stringify(sessionEntries),
-        );
-      } catch (error) {
-        console.log("Error saving workout session:", error);
-      }
-    }
-
-    saveSession();
-  }, [sessionEntries]);
-
-  function addSessionEntry(entry: AddSessionEntryInput) {
-    const newEntry: SessionEntry = {
-      id: `${Date.now()}-${Math.random()}`,
-      exerciseId: entry.exerciseId,
-      exerciseName: entry.exerciseName,
-      type: entry.type,
-      stats: entry.stats,
-      createdAt: new Date().toISOString(),
-      weight: entry.weight,
-      weightUnit: entry.weightUnit,
-      reps: entry.reps,
-      sets: entry.sets,
-      time: entry.time,
-      distance: entry.distance,
-    };
-
-    setSessionEntries((prev) => [...prev, newEntry]);
-  }
-
-  function clearSession() {
-    setSessionEntries([]);
-  }
-
-  const value = useMemo(
+  const value = useMemo<WorkoutSessionContextType>(
     () => ({
       sessionEntries,
-      addSessionEntry,
-      clearSession,
+
+      addSessionEntry(entry) {
+        const newEntry: SessionEntry = {
+          id: createSessionEntryId(),
+          createdAt: new Date().toISOString(),
+          ...entry,
+        };
+
+        setSessionEntries((currentEntries) => {
+          const updatedEntries = [...currentEntries, newEntry];
+
+          AsyncStorage.setItem(
+            WORKOUT_SESSION_KEY,
+            JSON.stringify(updatedEntries),
+          );
+
+          return updatedEntries;
+        });
+      },
+
+      updateSessionEntry(entryId, entry) {
+        /*
+          Editing a current-session exercise keeps the original ID and timestamp.
+          That way React can keep the same row identity, and the user is just
+          correcting a mistake instead of creating a brand-new log item.
+        */
+        setSessionEntries((currentEntries) => {
+          const updatedEntries = currentEntries.map((currentEntry) =>
+            currentEntry.id === entryId
+              ? {
+                  ...currentEntry,
+                  ...entry,
+                }
+              : currentEntry,
+          );
+
+          AsyncStorage.setItem(
+            WORKOUT_SESSION_KEY,
+            JSON.stringify(updatedEntries),
+          );
+
+          return updatedEntries;
+        });
+      },
+
+      removeSessionEntry(entryId) {
+        setSessionEntries((currentEntries) => {
+          const updatedEntries = currentEntries.filter(
+            (entry) => entry.id !== entryId,
+          );
+
+          AsyncStorage.setItem(
+            WORKOUT_SESSION_KEY,
+            JSON.stringify(updatedEntries),
+          );
+
+          return updatedEntries;
+        });
+      },
+
+      getSessionEntryById(entryId) {
+        return sessionEntries.find((entry) => entry.id === entryId);
+      },
+
+      clearSession() {
+        setSessionEntries([]);
+        AsyncStorage.removeItem(WORKOUT_SESSION_KEY);
+      },
     }),
     [sessionEntries],
   );

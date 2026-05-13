@@ -1,9 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useFocusEffect } from "expo-router";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Animated,
   Easing,
   Image,
   ImageBackground,
+  ImageSourcePropType,
   LayoutChangeEvent,
   Pressable,
   StyleSheet,
@@ -11,9 +13,15 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import DamageNumber from "../../src/components/DamageNumber";
+import DamageNumber, {
+  DamageNumberKind,
+} from "../../src/components/DamageNumber";
 import HealthBar from "../../src/components/HealthBar";
-import { getClassSpriteFrames } from "../../src/game/assets";
+import SpriteAnimator from "../../src/components/SpriteAnimator";
+import {
+  getBossSpriteFrames,
+  getClassSpriteFrames,
+} from "../../src/game/assets";
 import {
   BattleResult,
   createInitialBattleProgress,
@@ -22,30 +30,46 @@ import {
 } from "../../src/game/battleProgress";
 import { calculateBossHP, getBossStage } from "../../src/game/bosses";
 import { useCharacter } from "../../src/game/character";
-import { getCharacterClass } from "../../src/game/classes";
-import { Skill, SkillVisual, getFramesForVisual } from "../../src/game/skills";
+import { DEFAULT_CLASS_ID, getCharacterClass } from "../../src/game/classes";
+import {
+  Skill,
+  SkillVisual,
+  getFramesForVisual,
+  getSkillById,
+} from "../../src/game/skills";
+import { getSpotterById } from "../../src/game/spotters";
 
-// This is one floating damage number that pops up when you hit the boss.
+/*
+  Battle screen notes:
+
+  Main character:
+  - Uses DEFAULT_CLASS_ID from classes.ts.
+  - Right now that is "warrior".
+
+  Spotter:
+  - When summoned, the Spotter replaces the visible player sprite.
+  - For now, Spotters use spriteClassId from spotters.ts.
+  - Later, you can replace spriteClassId with real Spotter sprite assets.
+*/
+
 type DamageInstance = {
   id: number;
   value: number;
   x: number;
   y: number;
+  kind: DamageNumberKind;
 };
 
-// This stores how big the battle area is on the screen.
 type BattleLayerSize = {
   width: number;
   height: number;
 };
 
-// This is just a point on the screen.
 type AnchorPoint = {
   x: number;
   y: number;
 };
 
-// This stores one active animation effect, like lightning or fire.
 type ActiveVisualEffect = {
   id: string;
   visual: SkillVisual;
@@ -58,34 +82,54 @@ type ActiveVisualEffect = {
   rotationDeg?: number;
 };
 
-// Where the player sprite sits on the screen.
+type ActiveFighter = "main" | "spotter";
+
+// Where the player located on the screen as well as its size.
 const PLAYER_LAYOUT = {
-  left: 10,
+  left: -10,
   bottom: 40,
-  width: 128,
-  height: 128,
+  width: 192,
+  height: 192,
 };
 
-// Where the boss sprite sits on the screen.
 const BOSS_LAYOUT = {
-  right: 10,
-  top: 60,
-  width: 220,
-  height: 220,
+  right: 5,
+  top: 40,
+  width: 256,
+  height: 256,
 };
+
+/*
+  Spotter/main-character swap transition frames.
+
+  When you make your own transition animation, add the PNG frames here:
+
+  const FIGHTER_SWAP_TRANSITION_FRAMES: ImageSourcePropType[] = [
+    require("../../assets/effects/swap_transition_01.png"),
+    require("../../assets/effects/swap_transition_02.png"),
+    require("../../assets/effects/swap_transition_03.png"),
+  ];
+
+  The battle screen will automatically play those frames before the visible
+  fighter changes. Until you add art, it uses a simple dark flash so the swap
+  still feels smoother than instantly replacing the character sprite.
+*/
+const FIGHTER_SWAP_TRANSITION_FRAMES: ImageSourcePropType[] = [];
+const FALLBACK_SWAP_TRANSITION_MS = 320;
 
 export default function BattleScreen() {
-  // Grab the player data and battle helpers from your character system.
   const {
     character,
+    updateCharacter,
     calculateDamage,
     calculateMaxHP,
     calculateAttackCooldownMs,
     getEquippedSkill,
+    getActiveSpotter,
+    getTotalStatsForSpotter,
     resetVersion,
   } = useCharacter();
 
-  // Basic battle state.
   const [isLoaded, setIsLoaded] = useState(false);
   const [bossLevel, setBossLevel] = useState(1);
   const [bossMaxHP, setBossMaxHP] = useState(calculateBossHP(1));
@@ -93,12 +137,11 @@ export default function BattleScreen() {
   const [playerHP, setPlayerHP] = useState(calculateMaxHP());
   const [damageNumbers, setDamageNumbers] = useState<DamageInstance[]>([]);
   const [battleResult, setBattleResult] = useState<BattleResult>(null);
+  const [rewardedBossLevels, setRewardedBossLevels] = useState<number[]>([]);
 
-  // This tracks the charge-up for the special skill.
   const [basicHitCount, setBasicHitCount] = useState(0);
   const [chargedReady, setChargedReady] = useState(false);
 
-  // These control animation/effects.
   const [activeEffects, setActiveEffects] = useState<ActiveVisualEffect[]>([]);
   const [isAnimatingSkill, setIsAnimatingSkill] = useState(false);
   const [isRecovering, setIsRecovering] = useState(false);
@@ -106,83 +149,153 @@ export default function BattleScreen() {
     width: 0,
     height: 0,
   });
-  const [playerSpriteIndex, setPlayerSpriteIndex] = useState(0);
-  const [isPlayerAttacking, setIsPlayerAttacking] = useState(false);
 
-  // These Animated.Values control shake/swing motion.
+  const [isFighterAttacking, setIsFighterAttacking] = useState(false);
+
+  const [activeFighter, setActiveFighter] = useState<ActiveFighter>("main");
+  const [spotterTimeLeftMs, setSpotterTimeLeftMs] = useState(0);
+  const [lastRewardText, setLastRewardText] = useState("");
+
+  /*
+    Pausing is intentionally controlled by this screen instead of the app as a
+    whole. If the user leaves the Battle tab, boss attacks stop and timers are
+    cleared. When they return, they see a Paused overlay and tap once to resume.
+  */
+  const [isPaused, setIsPaused] = useState(false);
+  const [, setShouldShowReturnPause] = useState(false);
+
+  /*
+    These refs mirror pause-related state without forcing useFocusEffect to
+    rebuild its callback. This matters because rebuilding the focus callback can
+    run its cleanup, which would immediately pause the fight again right after
+    the user taps to resume.
+  */
+  const shouldShowReturnPauseRef = useRef(false);
+  const battleResultRef = useRef<BattleResult>(null);
+
+  /*
+    This becomes true while the main-character/Spotter transition is playing.
+    Input is locked during the transition so users cannot double-summon or attack
+    while the visible fighter is being swapped.
+  */
+  const [isSwapTransitionPlaying, setIsSwapTransitionPlaying] = useState(false);
+
   const bossShake = useRef(new Animated.Value(0)).current;
-  const playerSwing = useRef(new Animated.Value(0)).current;
+  const fighterSwing = useRef(new Animated.Value(0)).current;
 
-  // We store timeout/interval refs so we can clean them up safely.
   const timeoutRefs = useRef<ReturnType<typeof setTimeout>[]>([]);
   const intervalRefs = useRef<ReturnType<typeof setInterval>[]>([]);
+  const spotterTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const hasHandledInitialResetVersion = useRef(false);
 
-  // Figure out which boss stage we are on.
   const stage = getBossStage(bossLevel);
-  const bossSprite = stage.sprite;
+  const bossFrames = getBossSpriteFrames(stage.spriteId);
   const battleBackground = stage.background;
 
-  // Figure out player battle stats.
-  const maxPlayerHP = calculateMaxHP();
-  const basicSkill = getEquippedSkill("basic");
-  const chargedSkill = getEquippedSkill("charged");
+  const selectedSpotter = getActiveSpotter();
+  const selectedSpotterDefinition = selectedSpotter
+    ? getSpotterById(selectedSpotter.id)
+    : null;
+  const selectedSpotterStats = selectedSpotter
+    ? getTotalStatsForSpotter(selectedSpotter.id)
+    : null;
+
+  const isSpotterActive =
+    activeFighter === "spotter" &&
+    selectedSpotter !== null &&
+    selectedSpotterDefinition !== null &&
+    selectedSpotterStats !== null;
+
+  /*
+    This decides which sprite is shown on screen.
+
+    Main character:
+    - DEFAULT_CLASS_ID, currently warrior.
+
+    Spotter:
+    - selectedSpotterDefinition.spriteClassId.
+  */
+  const visibleFighterClassId = isSpotterActive
+    ? selectedSpotterDefinition.spriteClassId
+    : DEFAULT_CLASS_ID;
+
+  const visibleFighterClass = getCharacterClass(visibleFighterClassId);
+
+  const activeStrength = isSpotterActive
+    ? selectedSpotterStats.strength
+    : character.strength;
+
+  const activeSpeed = isSpotterActive
+    ? selectedSpotterStats.speed
+    : character.speed;
+
+  const basicSkill = isSpotterActive
+    ? getSkillById(selectedSpotterDefinition.fixedBasicSkillId)
+    : getEquippedSkill("basic");
+
+  const chargedSkill = isSpotterActive
+    ? getSkillById(selectedSpotterDefinition.fixedSpecialSkillId)
+    : getEquippedSkill("charged");
+
   const chargedHitsRequired = chargedSkill?.hitsRequired ?? 5;
+  const maxPlayerHP = calculateMaxHP();
 
-  // Lock input during certain moments.
   const isInputLocked =
-    battleResult !== null || isAnimatingSkill || isRecovering;
+    battleResult !== null ||
+    isPaused ||
+    isSwapTransitionPlaying ||
+    isAnimatingSkill ||
+    isRecovering;
 
-  // Boss damage over time.
   const bossAttackDamage = Math.max(
     5,
     Math.floor(6 + bossLevel * 1.5 * stage.hpMultiplier),
   );
 
-  // Get class animation data.
-  const classDefinition = getCharacterClass(character.classId);
-  const idleFrames = getClassSpriteFrames(character.classId, "idle");
-  const attackFrames = getClassSpriteFrames(character.classId, "attack");
-  const currentPlayerFrames = isPlayerAttacking ? attackFrames : idleFrames;
-  const playerSpriteSource =
-    currentPlayerFrames[playerSpriteIndex] ?? currentPlayerFrames[0];
+  const idleFrames = getClassSpriteFrames(visibleFighterClassId, "idle");
+  const attackFrames = getClassSpriteFrames(visibleFighterClassId, "attack");
 
-  // This builds the player swing animation.
-  const playerTransform = {
+  const currentFighterFrames = isFighterAttacking ? attackFrames : idleFrames;
+
+  /*
+    The fighter and boss idle animations are now handled by SpriteAnimator.
+    battle.tsx only decides WHICH frames to show.
+    SpriteAnimator decides WHEN to switch frames.
+  */
+
+  const fighterTransform = {
     transform: [
       {
-        rotate: playerSwing.interpolate({
+        rotate: fighterSwing.interpolate({
           inputRange: [0, 1],
           outputRange: [
             "0deg",
-            `${classDefinition.swingProfile.rotationDeg}deg`,
+            `${visibleFighterClass.swingProfile.rotationDeg}deg`,
           ],
         }),
       },
       {
-        translateX: playerSwing.interpolate({
+        translateX: fighterSwing.interpolate({
           inputRange: [0, 1],
-          outputRange: [0, classDefinition.swingProfile.translateX],
+          outputRange: [0, visibleFighterClass.swingProfile.translateX],
         }),
       },
       {
-        translateY: playerSwing.interpolate({
+        translateY: fighterSwing.interpolate({
           inputRange: [0, 1],
-          outputRange: [0, classDefinition.swingProfile.translateY],
+          outputRange: [0, visibleFighterClass.swingProfile.translateY],
         }),
       },
       {
-        scale: playerSwing.interpolate({
+        scale: fighterSwing.interpolate({
           inputRange: [0, 1],
-          outputRange: [1, classDefinition.swingProfile.scale],
+          outputRange: [1, visibleFighterClass.swingProfile.scale],
         }),
       },
     ],
   };
 
-  // These points tell effects where to appear.
   const anchorPoints = useMemo(() => {
-    const playerCenterX = PLAYER_LAYOUT.left + PLAYER_LAYOUT.width * 0.5;
     const playerCenterY =
       battleLayerSize.height -
       PLAYER_LAYOUT.bottom -
@@ -208,41 +321,52 @@ export default function BattleScreen() {
     } satisfies Record<"player" | "boss" | "screen", AnchorPoint>;
   }, [battleLayerSize.height, battleLayerSize.width]);
 
-  // Small helper for tracking timeouts.
   function registerTimeout(callback: () => void, delayMs: number) {
     const timeout = setTimeout(callback, delayMs);
     timeoutRefs.current.push(timeout);
     return timeout;
   }
 
-  // Small helper for tracking intervals.
   function registerInterval(callback: () => void, delayMs: number) {
     const interval = setInterval(callback, delayMs);
     intervalRefs.current.push(interval);
     return interval;
   }
 
-  // Clears all timers so old animation logic doesn't keep running.
   function clearAllAsyncRefs() {
     timeoutRefs.current.forEach(clearTimeout);
     intervalRefs.current.forEach(clearInterval);
     timeoutRefs.current = [];
+
     intervalRefs.current = [];
+
+    if (spotterTimerRef.current) {
+      clearInterval(spotterTimerRef.current);
+      spotterTimerRef.current = null;
+    }
   }
 
-  // Clears all battle visuals and resets animation values.
   function clearCombatVisuals() {
     clearAllAsyncRefs();
     setActiveEffects([]);
     setIsAnimatingSkill(false);
     setIsRecovering(false);
-    setIsPlayerAttacking(false);
-    setPlayerSpriteIndex(0);
-    playerSwing.stopAnimation();
-    playerSwing.setValue(0);
+    setIsFighterAttacking(false);
+    setActiveFighter("main");
+    setSpotterTimeLeftMs(0);
+    fighterSwing.stopAnimation();
+    fighterSwing.setValue(0);
   }
 
-  // Full reset back to the very first boss.
+  function setReturnPauseFlag(nextValue: boolean) {
+    shouldShowReturnPauseRef.current = nextValue;
+    setShouldShowReturnPause(nextValue);
+  }
+
+  useEffect(() => {
+    battleResultRef.current = battleResult;
+  }, [battleResult]);
+
   function resetBattleState() {
     const resetBossHP = calculateBossHP(1);
     const resetPlayerHP = calculateMaxHP();
@@ -255,11 +379,15 @@ export default function BattleScreen() {
     setDamageNumbers([]);
     setBasicHitCount(0);
     setChargedReady(false);
+    setRewardedBossLevels([]);
+    setLastRewardText("");
+    setIsPaused(false);
+    setReturnPauseFlag(false);
+    setIsSwapTransitionPlaying(false);
     bossShake.setValue(0);
     clearCombatVisuals();
   }
 
-  // Load saved battle progress when the screen starts.
   useEffect(() => {
     async function restoreBattle() {
       const saved = await loadBattleProgress();
@@ -270,6 +398,7 @@ export default function BattleScreen() {
         setBossHP(saved.bossHP);
         setPlayerHP(saved.playerHP);
         setBattleResult(saved.battleResult);
+        setRewardedBossLevels(saved.rewardedBossLevels);
       } else {
         const initialPlayerHP = calculateMaxHP();
         const initial = createInitialBattleProgress(
@@ -283,15 +412,15 @@ export default function BattleScreen() {
         setBossHP(initial.bossHP);
         setPlayerHP(initial.playerHP);
         setBattleResult(initial.battleResult);
+        setRewardedBossLevels(initial.rewardedBossLevels);
       }
 
       setIsLoaded(true);
     }
 
     restoreBattle();
-  }, [calculateMaxHP]);
+  }, []);
 
-  // Save battle progress whenever important battle values change.
   useEffect(() => {
     if (!isLoaded) {
       return;
@@ -303,10 +432,18 @@ export default function BattleScreen() {
       bossHP,
       playerHP,
       battleResult,
+      rewardedBossLevels,
     });
-  }, [isLoaded, bossLevel, bossMaxHP, bossHP, playerHP, battleResult]);
+  }, [
+    isLoaded,
+    bossLevel,
+    bossMaxHP,
+    bossHP,
+    playerHP,
+    battleResult,
+    rewardedBossLevels,
+  ]);
 
-  // If the character system says "full reset happened", reset battle too.
   useEffect(() => {
     if (!isLoaded) {
       return;
@@ -320,7 +457,6 @@ export default function BattleScreen() {
     resetBattleState();
   }, [resetVersion, isLoaded]);
 
-  // Keep player HP from going above the new max HP.
   useEffect(() => {
     setPlayerHP((prev) => {
       if (battleResult !== null) {
@@ -331,9 +467,8 @@ export default function BattleScreen() {
     });
   }, [maxPlayerHP, battleResult]);
 
-  // Boss attacks the player on a timer.
   useEffect(() => {
-    if (!isLoaded || battleResult !== null) {
+    if (!isLoaded || battleResult !== null || isPaused) {
       return;
     }
 
@@ -343,6 +478,8 @@ export default function BattleScreen() {
 
         if (newHP <= 0) {
           setBattleResult("lose");
+          setActiveFighter("main");
+          setSpotterTimeLeftMs(0);
         }
 
         return newHP;
@@ -350,26 +487,79 @@ export default function BattleScreen() {
     }, 1500);
 
     return () => clearInterval(timer);
-  }, [isLoaded, battleResult, bossAttackDamage]);
+  }, [isLoaded, battleResult, bossAttackDamage, isPaused]);
 
-  // Cleanup when leaving the screen.
   useEffect(() => {
     return () => {
       clearAllAsyncRefs();
     };
   }, []);
 
+  useFocusEffect(
+    useCallback(() => {
+      /*
+        When this screen comes back into focus after being blurred, keep the
+        fight paused until the user intentionally taps to resume.
+
+        Important: this callback intentionally reads refs instead of depending
+        on shouldShowReturnPause/battleResult. If those values are dependencies,
+        tapping to resume changes state, useFocusEffect cleans up the old
+        callback, and that cleanup can pause the battle again. That was the
+        cause of the "Paused" message blinking without actually resuming.
+      */
+      if (
+        shouldShowReturnPauseRef.current &&
+        battleResultRef.current === null
+      ) {
+        setIsPaused(true);
+      }
+
+      return () => {
+        /*
+          Leaving the Battle screen should freeze combat. We clear pending
+          timeouts/intervals so skill effects, recovery windows, and Spotter
+          timers do not keep progressing in the background.
+        */
+        if (battleResultRef.current === null) {
+          setIsPaused(true);
+          setReturnPauseFlag(true);
+        }
+
+        clearAllAsyncRefs();
+        setActiveEffects([]);
+        setIsAnimatingSkill(false);
+        setIsRecovering(false);
+        setIsFighterAttacking(false);
+        setIsSwapTransitionPlaying(false);
+        fighterSwing.stopAnimation();
+        fighterSwing.setValue(0);
+        bossShake.stopAnimation();
+        bossShake.setValue(0);
+      };
+    }, []),
+  );
+
+  /*
+    If the visible fighter changes, reset animation frame.
+    Without this, a Spotter could appear mid-frame from the previous sprite.
+  */
+  useEffect(() => {
+    setIsFighterAttacking(false);
+    fighterSwing.stopAnimation();
+    fighterSwing.setValue(0);
+  }, [visibleFighterClassId]);
+
   function getAnchorPoint(anchor: "player" | "boss" | "screen") {
     return anchorPoints[anchor];
   }
 
-  // Builds an effect that appears at one anchor point.
   function buildAnchoredEffect(visual: SkillVisual): ActiveVisualEffect | null {
     if (!visual.anchor) {
       return null;
     }
 
     const frames = getFramesForVisual(visual);
+
     if (frames.length === 0) {
       return null;
     }
@@ -390,13 +580,13 @@ export default function BattleScreen() {
     };
   }
 
-  // Builds a beam-type effect from one point to another.
   function buildBeamEffect(visual: SkillVisual): ActiveVisualEffect | null {
     if (!visual.startAnchor || !visual.endAnchor) {
       return null;
     }
 
     const frames = getFramesForVisual(visual);
+
     if (frames.length === 0) {
       return null;
     }
@@ -432,7 +622,6 @@ export default function BattleScreen() {
     };
   }
 
-  // Adds one effect and animates its frames.
   function addVisualEffect(visual: SkillVisual) {
     const builtEffect =
       visual.type === "beam"
@@ -446,7 +635,7 @@ export default function BattleScreen() {
     setActiveEffects((prev) => [...prev, builtEffect]);
 
     const frameDurationBase = visual.frameDurationMs ?? 90;
-    const speedBonus = Math.min(character.speed * 0.015, 0.45);
+    const speedBonus = Math.min(activeSpeed * 0.015, 0.45);
     const adjustedFrameDuration = Math.max(
       60,
       Math.floor(frameDurationBase * (1 - speedBonus)),
@@ -473,8 +662,12 @@ export default function BattleScreen() {
     }, adjustedFrameDuration);
   }
 
-  // Makes the boss shake when hit.
   function playBossShake() {
+    /*
+      This is separate from the PNG frames.
+      SpriteAnimator handles the frame swapping.
+      fighterSwing adds a small physical lunge/swing movement.
+    */
     Animated.sequence([
       Animated.timing(bossShake, {
         toValue: 8,
@@ -504,51 +697,31 @@ export default function BattleScreen() {
     ]).start();
   }
 
-  // Plays the player attack frames + swing motion.
-  function playPlayerAttackAnimation() {
-    setIsPlayerAttacking(true);
-    setPlayerSpriteIndex(0);
-    playerSwing.setValue(0);
-
-    const attackFramesSafe =
-      attackFrames.length > 0 ? attackFrames : idleFrames;
-
-    const frameStepMs = Math.max(
-      55,
-      Math.floor(
-        classDefinition.swingProfile.durationMs / attackFramesSafe.length,
-      ),
-    );
-
-    attackFramesSafe.forEach((_, index) => {
-      registerTimeout(() => {
-        setPlayerSpriteIndex(index);
-      }, index * frameStepMs);
-    });
+  function playFighterAttackAnimation() {
+    setIsFighterAttacking(true);
+    fighterSwing.setValue(0);
 
     Animated.sequence([
-      Animated.timing(playerSwing, {
+      Animated.timing(fighterSwing, {
         toValue: 1,
-        duration: classDefinition.swingProfile.durationMs,
+        duration: visibleFighterClass.swingProfile.durationMs,
         easing: Easing.out(Easing.quad),
         useNativeDriver: true,
       }),
-      Animated.timing(playerSwing, {
+      Animated.timing(fighterSwing, {
         toValue: 0,
         duration: Math.max(
           70,
-          Math.floor(classDefinition.swingProfile.durationMs * 0.75),
+          Math.floor(visibleFighterClass.swingProfile.durationMs * 0.75),
         ),
         easing: Easing.inOut(Easing.quad),
         useNativeDriver: true,
       }),
     ]).start(() => {
-      setIsPlayerAttacking(false);
-      setPlayerSpriteIndex(0);
+      setIsFighterAttacking(false);
     });
   }
 
-  // Plays all visuals tied to a skill.
   function playSkillVisuals(skill: Skill) {
     setIsAnimatingSkill(true);
 
@@ -566,7 +739,7 @@ export default function BattleScreen() {
       skill.visuals.reduce((max, visual) => {
         const frames = getFramesForVisual(visual);
         const frameDurationBase = visual.frameDurationMs ?? 90;
-        const speedBonus = Math.min(character.speed * 0.015, 0.45);
+        const speedBonus = Math.min(activeSpeed * 0.015, 0.45);
         const adjustedFrameDuration = Math.max(
           60,
           Math.floor(frameDurationBase * (1 - speedBonus)),
@@ -583,18 +756,51 @@ export default function BattleScreen() {
     }, longestVisual + 40);
   }
 
-  // Adds a cooldown after each skill use.
+  function getCooldownMs(skill: Skill) {
+    if (!isSpotterActive) {
+      return calculateAttackCooldownMs(skill.activation);
+    }
+
+    const baseCooldown = skill.activation === "basic" ? 650 : 1100;
+    const speedReduction = Math.min(
+      activeSpeed * 18,
+      skill.activation === "basic" ? 320 : 420,
+    );
+
+    return Math.max(
+      skill.activation === "basic" ? 220 : 420,
+      baseCooldown - speedReduction,
+    );
+  }
+
   function startRecovery(skill: Skill) {
     setIsRecovering(true);
-    const cooldownMs = calculateAttackCooldownMs(skill.activation);
 
     registerTimeout(() => {
       setIsRecovering(false);
-    }, cooldownMs);
+    }, getCooldownMs(skill));
   }
 
-  // Creates floating damage text near the boss.
-  function spawnDamageNumber(value: number) {
+  function getDamageNumberKind(skill: Skill, damage: number): DamageNumberKind {
+    /*
+      This does not change gameplay damage. It only decides how dramatic the
+      floating number should look. Charged skills get a stronger style, and
+      very large hits are reserved for the critical-style presentation.
+    */
+    const isBigChunkOfBossHP = damage >= bossMaxHP * 0.18;
+
+    if (isBigChunkOfBossHP) {
+      return "critical";
+    }
+
+    if (skill.activation === "charged") {
+      return "skill";
+    }
+
+    return "normal";
+  }
+
+  function spawnDamageNumber(value: number, kind: DamageNumberKind) {
     const id = Date.now() + Math.random();
 
     setDamageNumbers((prev) => [
@@ -602,34 +808,139 @@ export default function BattleScreen() {
       {
         id,
         value,
-        x: 90 + Math.random() * 30,
-        y: 90 + Math.random() * 30,
+        kind,
+        /*
+          Bigger numbers need a little more room, so these coordinates place
+          them near the boss center instead of tucked into the corner.
+        */
+        x: 70 + Math.random() * 42,
+        y: 74 + Math.random() * 34,
       },
     ]);
   }
 
-  // One shared attack function for both basic and charged skills.
+  function calculateActiveDamage(skill: Skill) {
+    if (!isSpotterActive) {
+      return calculateDamage(skill);
+    }
+
+    return Math.max(1, Math.floor(activeStrength * 5 * skill.damageMultiplier));
+  }
+
+  function getSkillDamageEvents(skill: Skill, totalDamage: number) {
+    /*
+      This converts a skill's optional damageEvents into real damage numbers.
+
+      Example inside src/game/skills.ts:
+        damageEvents: [
+          { delayMs: 250, percent: 0.5 },
+          { delayMs: 650, percent: 0.5 },
+        ]
+
+      That gives the skill two separate HP reductions and two separate floating
+      numbers. If a skill does not define damageEvents, it behaves like before:
+      one full damage hit immediately when the attack starts.
+    */
+    const configuredEvents =
+      skill.damageEvents && skill.damageEvents.length > 0
+        ? skill.damageEvents
+        : [{ delayMs: 0, percent: 1 }];
+
+    const totalPercent = configuredEvents.reduce(
+      (sum, event) => sum + Math.max(0, event.percent),
+      0,
+    );
+
+    if (totalPercent <= 0) {
+      return [{ delayMs: 0, damage: totalDamage }];
+    }
+
+    let assignedDamage = 0;
+
+    return configuredEvents.map((event, index) => {
+      const isLastEvent = index === configuredEvents.length - 1;
+      const normalizedPercent = Math.max(0, event.percent) / totalPercent;
+
+      /*
+        Rounding every hit independently can accidentally lose or create damage.
+        To avoid that, every hit except the last is rounded normally, and the
+        last hit receives whatever damage remains.
+      */
+      const damage = isLastEvent
+        ? Math.max(1, totalDamage - assignedDamage)
+        : Math.max(1, Math.round(totalDamage * normalizedPercent));
+
+      assignedDamage += damage;
+
+      return {
+        delayMs: Math.max(0, event.delayMs),
+        damage,
+      };
+    });
+  }
+
+  function finishBossVictory() {
+    rewardBossFirstClearIfNeeded(bossLevel);
+    setBattleResult("win");
+    setActiveFighter("main");
+    setSpotterTimeLeftMs(0);
+  }
+
+  function rewardBossFirstClearIfNeeded(clearedBossLevel: number) {
+    if (rewardedBossLevels.includes(clearedBossLevel)) {
+      setLastRewardText("");
+      return;
+    }
+
+    const clearedStage = getBossStage(clearedBossLevel);
+    const rewardAmount = clearedStage.firstClearSpotterPoints;
+
+    setRewardedBossLevels((prev) => [...prev, clearedBossLevel]);
+    setLastRewardText(`+${rewardAmount} Spotter Points`);
+
+    updateCharacter({
+      ...character,
+      spotterPoints: character.spotterPoints + rewardAmount,
+    });
+  }
+
   function applyAttack(skill: Skill) {
     if (!isLoaded || isInputLocked) {
       return;
     }
 
-    const damage = calculateDamage(skill);
-    const newHP = Math.max(0, bossHP - damage);
+    const totalDamage = calculateActiveDamage(skill);
+    const damageEvents = getSkillDamageEvents(skill, totalDamage);
+    let remainingBossHP = bossHP;
+    let hasDefeatedBoss = false;
 
-    spawnDamageNumber(damage);
     playSkillVisuals(skill);
-    playPlayerAttackAnimation();
-    playBossShake();
+    playFighterAttackAnimation();
     startRecovery(skill);
-    setBossHP(newHP);
 
-    if (newHP <= 0) {
-      setBattleResult("win");
+    for (const event of damageEvents) {
+      registerTimeout(() => {
+        if (hasDefeatedBoss || battleResultRef.current !== null) {
+          return;
+        }
+
+        remainingBossHP = Math.max(0, remainingBossHP - event.damage);
+
+        spawnDamageNumber(
+          event.damage,
+          getDamageNumberKind(skill, event.damage),
+        );
+        playBossShake();
+        setBossHP(remainingBossHP);
+
+        if (remainingBossHP <= 0) {
+          hasDefeatedBoss = true;
+          finishBossVictory();
+        }
+      }, event.delayMs);
     }
   }
 
-  // Normal tap attack.
   function attackBoss() {
     if (!basicSkill || isInputLocked) {
       return;
@@ -645,7 +956,6 @@ export default function BattleScreen() {
     }
   }
 
-  // Special charged skill.
   function useChargedSkill() {
     if (!chargedSkill || !chargedReady || isInputLocked) {
       return;
@@ -656,14 +966,87 @@ export default function BattleScreen() {
     setChargedReady(false);
   }
 
-  // Remove one floating damage number after it finishes animating.
+  function getSwapTransitionDurationMs() {
+    if (FIGHTER_SWAP_TRANSITION_FRAMES.length === 0) {
+      return FALLBACK_SWAP_TRANSITION_MS;
+    }
+
+    return FIGHTER_SWAP_TRANSITION_FRAMES.length * 70;
+  }
+
+  function finishSpotterSummon() {
+    if (!selectedSpotterDefinition) {
+      setIsSwapTransitionPlaying(false);
+      return;
+    }
+
+    setActiveFighter("spotter");
+    setSpotterTimeLeftMs(selectedSpotterDefinition.summonDurationMs);
+    setBasicHitCount(0);
+    setChargedReady(false);
+    setIsSwapTransitionPlaying(false);
+
+    if (spotterTimerRef.current) {
+      clearInterval(spotterTimerRef.current);
+    }
+
+    spotterTimerRef.current = setInterval(() => {
+      setSpotterTimeLeftMs((prev) => {
+        const next = Math.max(0, prev - 250);
+
+        if (next <= 0) {
+          if (spotterTimerRef.current) {
+            clearInterval(spotterTimerRef.current);
+            spotterTimerRef.current = null;
+          }
+
+          setActiveFighter("main");
+          setBasicHitCount(0);
+          setChargedReady(false);
+        }
+
+        return next;
+      });
+    }, 250);
+  }
+
+  function playSpotterSwapTransition() {
+    /*
+      The actual character swap happens halfway through the transition. That
+      gives your future animation a chance to hide the instant sprite change.
+    */
+    const durationMs = getSwapTransitionDurationMs();
+
+    setIsSwapTransitionPlaying(true);
+
+    registerTimeout(
+      () => {
+        finishSpotterSummon();
+      },
+      Math.max(120, Math.floor(durationMs * 0.5)),
+    );
+  }
+
+  function summonSpotter() {
+    if (
+      !selectedSpotter ||
+      !selectedSpotterDefinition ||
+      isInputLocked ||
+      battleResult !== null ||
+      activeFighter === "spotter"
+    ) {
+      return;
+    }
+
+    playSpotterSwapTransition();
+  }
+
   function removeDamageNumber(id: number) {
     setDamageNumbers((prev) =>
       prev.filter((damageNumber) => damageNumber.id !== id),
     );
   }
 
-  // Go to the next boss after a win.
   function goToNextBoss() {
     const nextBoss = bossLevel + 1;
     const nextHP = calculateBossHP(nextBoss);
@@ -676,11 +1059,14 @@ export default function BattleScreen() {
     setDamageNumbers([]);
     setBasicHitCount(0);
     setChargedReady(false);
+    setLastRewardText("");
+    setIsPaused(false);
+    setReturnPauseFlag(false);
+    setIsSwapTransitionPlaying(false);
     bossShake.setValue(0);
     clearCombatVisuals();
   }
 
-  // Retry the same boss after a loss.
   function retryBoss() {
     const sameBossHP = calculateBossHP(bossLevel);
 
@@ -691,23 +1077,26 @@ export default function BattleScreen() {
     setDamageNumbers([]);
     setBasicHitCount(0);
     setChargedReady(false);
+    setLastRewardText("");
+    setIsPaused(false);
+    setReturnPauseFlag(false);
+    setIsSwapTransitionPlaying(false);
     bossShake.setValue(0);
     clearCombatVisuals();
   }
 
-  // Save the size of the battle area so effects can be placed correctly.
   function handleBattleLayerLayout(event: LayoutChangeEvent) {
     const { width, height } = event.nativeEvent.layout;
     setBattleLayerSize({ width, height });
   }
 
-  // This handles any tap on the screen.
-  // If battle ended:
-  // - win = next boss
-  // - loss = retry
-  // If battle not ended:
-  // - normal attack
   function handleScreenPress() {
+    if (isPaused) {
+      setIsPaused(false);
+      setReturnPauseFlag(false);
+      return;
+    }
+
     if (battleResult === "win") {
       goToNextBoss();
       return;
@@ -737,9 +1126,6 @@ export default function BattleScreen() {
         resizeMode="cover"
       >
         <SafeAreaView style={styles.overlay}>
-          {/* TOP INFO
-             Only keep the important text:
-             boss name, boss level, and HP numbers. */}
           <View style={styles.topUi}>
             <Text style={styles.title}>{stage.name}</Text>
             <Text style={styles.levelText}>{bossLevel}</Text>
@@ -752,11 +1138,15 @@ export default function BattleScreen() {
             </View>
           </View>
 
-          {/* MAIN BATTLE AREA
-             Player and boss stay in fixed positions here. */}
           <View style={styles.battleLayer} onLayout={handleBattleLayerLayout}>
-            <Animated.View style={[styles.playerWrapper, playerTransform]}>
-              <Image source={playerSpriteSource} style={styles.playerImage} />
+            <Animated.View style={[styles.playerWrapper, fighterTransform]}>
+              <SpriteAnimator
+                frames={currentFighterFrames}
+                frameDurationMs={isFighterAttacking ? 70 : 160}
+                loop={!isFighterAttacking}
+                style={styles.playerImage}
+                onComplete={() => setIsFighterAttacking(false)}
+              />
             </Animated.View>
 
             <Animated.View
@@ -768,8 +1158,13 @@ export default function BattleScreen() {
               ]}
             >
               <View style={styles.bossPressable}>
-                {bossSprite ? (
-                  <Image source={bossSprite} style={styles.bossImage} />
+                {bossFrames.length > 0 ? (
+                  <SpriteAnimator
+                    frames={bossFrames}
+                    frameDurationMs={180}
+                    loop
+                    style={styles.bossImage}
+                  />
                 ) : (
                   <View style={styles.iconBossContainer}>
                     <Text style={styles.iconBossText}>{stage.icon ?? ""}</Text>
@@ -782,13 +1177,13 @@ export default function BattleScreen() {
                     damage={damageNumber.value}
                     x={damageNumber.x}
                     y={damageNumber.y}
+                    kind={damageNumber.kind}
                     onComplete={() => removeDamageNumber(damageNumber.id)}
                   />
                 ))}
               </View>
             </Animated.View>
 
-            {/* Skill effects like lightning / fire / beam */}
             {activeEffects.map((effect) => {
               const source =
                 effect.frames[effect.frameIndex] ?? effect.frames[0];
@@ -813,25 +1208,54 @@ export default function BattleScreen() {
               );
             })}
 
-            {/* RESULT OVERLAY
-               This is absolute so it does NOT push the layout around. */}
             {battleResult !== null && (
-              <View style={styles.resultOverlay} pointerEvents="none">
+              <View style={styles.resultOverlay}>
                 <Text
                   style={[
                     styles.resultText,
                     battleResult === "win" ? styles.winText : styles.loseText,
                   ]}
                 >
-                  {battleResult === "win" ? "Win" : "Loss"}
+                  {battleResult === "win" ? "Victory" : "Defeat"}
                 </Text>
+
+                {battleResult === "win" && lastRewardText.length > 0 && (
+                  <Text style={styles.rewardText}>{lastRewardText}</Text>
+                )}
+
+                <Text style={styles.resultPromptText}>
+                  {battleResult === "win"
+                    ? "Tap to start the next battle"
+                    : "Tap to retry"}
+                </Text>
+              </View>
+            )}
+
+            {isPaused && battleResult === null && (
+              <View style={styles.pausedOverlay}>
+                <Text style={styles.pausedTitle}>Paused</Text>
+                <Text style={styles.pausedPrompt}>Tap to resume battle</Text>
+              </View>
+            )}
+
+            {isSwapTransitionPlaying && (
+              <View style={styles.swapTransitionOverlay} pointerEvents="none">
+                {FIGHTER_SWAP_TRANSITION_FRAMES.length > 0 ? (
+                  <SpriteAnimator
+                    frames={FIGHTER_SWAP_TRANSITION_FRAMES}
+                    frameDurationMs={70}
+                    loop={false}
+                    style={styles.swapTransitionImage}
+                  />
+                ) : (
+                  <View style={styles.swapTransitionFallback}>
+                    <Text style={styles.swapTransitionText}>Swap</Text>
+                  </View>
+                )}
               </View>
             )}
           </View>
 
-          {/* BOTTOM INFO
-             Only show character level and player HP numbers.
-             No extra words, no class name, no skill names, no instructions. */}
           <View style={styles.bottomUi}>
             <View style={styles.section}>
               <HealthBar current={playerHP} max={maxPlayerHP} />
@@ -839,12 +1263,16 @@ export default function BattleScreen() {
                 {playerHP} / {maxPlayerHP}
               </Text>
               <Text style={styles.levelText}>{character.level}</Text>
+
+              {isSpotterActive && selectedSpotterDefinition && (
+                <Text style={styles.spotterTimerText}>
+                  {selectedSpotterDefinition.name}:{" "}
+                  {Math.ceil(spotterTimeLeftMs / 1000)}s
+                </Text>
+              )}
             </View>
           </View>
 
-          {/* CHARGED SKILL BUTTON
-             Keep the feature, but make the text minimal.
-             We use an icon and little dots instead of words. */}
           <View style={styles.skillHud} pointerEvents="box-none">
             <View style={styles.chargeDotsRow}>
               {Array.from({ length: chargedHitsRequired }).map((_, index) => {
@@ -879,6 +1307,27 @@ export default function BattleScreen() {
             >
               <Text style={styles.skillButtonText}>⚡</Text>
             </Pressable>
+
+            {selectedSpotterDefinition && (
+              <Pressable
+                style={({ pressed }) => [
+                  styles.spotterButton,
+                  isSpotterActive
+                    ? styles.spotterButtonActive
+                    : styles.spotterButtonReady,
+                  pressed &&
+                    !isInputLocked &&
+                    !isSpotterActive &&
+                    styles.buttonPressed,
+                ]}
+                onPress={summonSpotter}
+                disabled={isInputLocked || isSpotterActive}
+              >
+                <Text style={styles.spotterButtonText}>
+                  {selectedSpotterDefinition.icon}
+                </Text>
+              </Pressable>
+            )}
           </View>
         </SafeAreaView>
       </ImageBackground>
@@ -890,11 +1339,9 @@ const styles = StyleSheet.create({
   screenPressable: {
     flex: 1,
   },
-
   fullScreenBackground: {
     flex: 1,
   },
-
   overlay: {
     flex: 1,
     paddingHorizontal: 20,
@@ -902,29 +1349,24 @@ const styles = StyleSheet.create({
     paddingBottom: 24,
     justifyContent: "space-between",
   },
-
   loadingContainer: {
     flex: 1,
     backgroundColor: "#000",
     alignItems: "center",
     justifyContent: "center",
   },
-
   loadingText: {
     color: "white",
     fontSize: 20,
   },
-
   topUi: {
     width: "100%",
     alignItems: "center",
   },
-
   bottomUi: {
     width: "100%",
     alignItems: "center",
   },
-
   title: {
     fontSize: 30,
     color: "white",
@@ -934,7 +1376,6 @@ const styles = StyleSheet.create({
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 2,
   },
-
   levelText: {
     fontSize: 22,
     color: "#fff",
@@ -943,13 +1384,11 @@ const styles = StyleSheet.create({
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 2,
   },
-
   section: {
     width: "100%",
     alignItems: "center",
     marginTop: 8,
   },
-
   hpText: {
     color: "#eee",
     fontSize: 15,
@@ -957,14 +1396,21 @@ const styles = StyleSheet.create({
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 2,
   },
-
+  spotterTimerText: {
+    color: "#f2c94c",
+    fontSize: 14,
+    fontWeight: "bold",
+    marginTop: 4,
+    textShadowColor: "rgba(0,0,0,0.6)",
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
+  },
   battleLayer: {
     flex: 1,
     width: "100%",
     position: "relative",
     justifyContent: "center",
   },
-
   playerWrapper: {
     position: "absolute",
     left: PLAYER_LAYOUT.left,
@@ -975,13 +1421,11 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     zIndex: 5,
   },
-
   playerImage: {
     width: PLAYER_LAYOUT.width,
     height: PLAYER_LAYOUT.height,
     resizeMode: "contain",
   },
-
   bossWrapper: {
     position: "absolute",
     right: BOSS_LAYOUT.right,
@@ -990,37 +1434,31 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     zIndex: 4,
   },
-
   bossPressable: {
     width: BOSS_LAYOUT.width,
     height: BOSS_LAYOUT.height,
     alignItems: "center",
     justifyContent: "center",
   },
-
   bossImage: {
     width: BOSS_LAYOUT.width,
     height: BOSS_LAYOUT.height,
     resizeMode: "contain",
   },
-
   iconBossContainer: {
     width: BOSS_LAYOUT.width,
     height: BOSS_LAYOUT.height,
     alignItems: "center",
     justifyContent: "center",
   },
-
   iconBossText: {
     fontSize: 96,
   },
-
   effectBase: {
     position: "absolute",
     resizeMode: "contain",
     zIndex: 6,
   },
-
   resultOverlay: {
     position: "absolute",
     left: 0,
@@ -1030,7 +1468,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     zIndex: 20,
   },
-
   resultText: {
     fontSize: 34,
     fontWeight: "bold",
@@ -1038,15 +1475,92 @@ const styles = StyleSheet.create({
     textShadowOffset: { width: 0, height: 2 },
     textShadowRadius: 4,
   },
-
+  rewardText: {
+    color: "#f2c94c",
+    fontSize: 18,
+    fontWeight: "bold",
+    marginTop: 8,
+    textShadowColor: "rgba(0,0,0,0.75)",
+    textShadowOffset: { width: 0, height: 2 },
+    textShadowRadius: 4,
+  },
+  resultPromptText: {
+    color: "white",
+    fontSize: 16,
+    fontWeight: "700",
+    marginTop: 10,
+    textShadowColor: "rgba(0,0,0,0.75)",
+    textShadowOffset: { width: 0, height: 2 },
+    textShadowRadius: 4,
+  },
+  pausedOverlay: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    top: "38%",
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 25,
+    paddingVertical: 18,
+    borderRadius: 18,
+    backgroundColor: "rgba(0,0,0,0.48)",
+  },
+  pausedTitle: {
+    color: "white",
+    fontSize: 34,
+    fontWeight: "bold",
+    textShadowColor: "rgba(0,0,0,0.75)",
+    textShadowOffset: { width: 0, height: 2 },
+    textShadowRadius: 4,
+  },
+  pausedPrompt: {
+    color: "#eee",
+    fontSize: 16,
+    fontWeight: "700",
+    marginTop: 8,
+    textShadowColor: "rgba(0,0,0,0.75)",
+    textShadowOffset: { width: 0, height: 2 },
+    textShadowRadius: 4,
+  },
+  swapTransitionOverlay: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 30,
+  },
+  swapTransitionImage: {
+    width: 260,
+    height: 260,
+    resizeMode: "contain",
+  },
+  swapTransitionFallback: {
+    width: 210,
+    height: 210,
+    borderRadius: 999,
+    backgroundColor: "rgba(30,144,255,0.22)",
+    borderWidth: 2,
+    borderColor: "rgba(158,208,255,0.75)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  swapTransitionText: {
+    color: "white",
+    fontSize: 22,
+    fontWeight: "bold",
+    textShadowColor: "rgba(0,0,0,0.75)",
+    textShadowOffset: { width: 0, height: 2 },
+    textShadowRadius: 4,
+  },
   winText: {
     color: "#4caf50",
   },
-
   loseText: {
     color: "#ff5555",
   },
-
   skillHud: {
     position: "absolute",
     right: 20,
@@ -1054,26 +1568,21 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 8,
   },
-
   chargeDotsRow: {
     flexDirection: "row",
     gap: 6,
   },
-
   chargeDot: {
     width: 10,
     height: 10,
     borderRadius: 999,
   },
-
   chargeDotFilled: {
     backgroundColor: "#f2c94c",
   },
-
   chargeDotEmpty: {
     backgroundColor: "rgba(255,255,255,0.35)",
   },
-
   skillButton: {
     width: 62,
     height: 62,
@@ -1081,23 +1590,38 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-
   skillButtonReady: {
     backgroundColor: "#f2c94c",
   },
-
   skillButtonLocked: {
     backgroundColor: "rgba(85,85,85,0.85)",
   },
-
-  buttonPressed: {
-    opacity: 0.85,
-    transform: [{ scale: 0.98 }],
-  },
-
   skillButtonText: {
     color: "#111",
     fontWeight: "700",
     fontSize: 26,
+  },
+  spotterButton: {
+    width: 54,
+    height: 54,
+    borderRadius: 999,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+  },
+  spotterButtonReady: {
+    backgroundColor: "rgba(30,144,255,0.9)",
+    borderColor: "#9ed0ff",
+  },
+  spotterButtonActive: {
+    backgroundColor: "rgba(242,201,76,0.9)",
+    borderColor: "#fff3b0",
+  },
+  spotterButtonText: {
+    fontSize: 24,
+  },
+  buttonPressed: {
+    opacity: 0.85,
+    transform: [{ scale: 0.98 }],
   },
 });

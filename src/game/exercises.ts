@@ -341,12 +341,71 @@ export const exercises: Exercise[] = [
   },
 ];
 
-export function getExercisesByMuscles(selected: MuscleGroup[]) {
-  return exercises.filter((exercise) =>
+export function getStatsForMuscleGroup(muscle: MuscleGroup): ExerciseStat[] {
+  /*
+    This is the game-side reward map for custom exercises.
+
+    The user only needs to pick a category. This function decides which stat
+    points that category gives. Keep it simple so the Add Exercise form is not
+    overloaded with game rules.
+  */
+  if (muscle === "cardio") {
+    return ["speed", "endurance"];
+  }
+
+  if (muscle === "legs" || muscle === "core") {
+    return ["strength", "endurance"];
+  }
+
+  return ["strength"];
+}
+
+export function getExerciseTypeForMuscleGroup(
+  muscle: MuscleGroup,
+): ExerciseType {
+  return muscle === "cardio" ? "cardio" : "strength";
+}
+
+function slugifyExerciseName(name: string) {
+  return name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
+export function createCustomExercise(input: {
+  name: string;
+  muscle: MuscleGroup;
+  stats?: ExerciseStat[];
+}): Exercise {
+  const cleanName = input.name.trim();
+  const muscle = input.muscle;
+
+  return {
+    id: `custom_${Date.now()}_${slugifyExerciseName(cleanName)}`,
+    name: cleanName,
+    muscles: [muscle],
+    stats:
+      input.stats && input.stats.length > 0
+        ? input.stats
+        : getStatsForMuscleGroup(muscle),
+    type: getExerciseTypeForMuscleGroup(muscle),
+  };
+}
+
+export function getExercisesByMuscles(
+  selected: MuscleGroup[],
+  exercisePool: Exercise[] = exercises,
+) {
+  return exercisePool.filter((exercise) =>
     selected.some((muscle) => exercise.muscles.includes(muscle)),
   );
 }
 
-export function getExerciseById(id: string) {
-  return exercises.find((exercise) => exercise.id === id);
+export function getExerciseById(
+  id: string,
+  exercisePool: Exercise[] = exercises,
+) {
+  return exercisePool.find((exercise) => exercise.id === id);
 }

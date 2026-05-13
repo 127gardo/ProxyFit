@@ -1,5 +1,5 @@
 import { router, useLocalSearchParams } from "expo-router";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Alert,
   Keyboard,
@@ -14,7 +14,7 @@ import {
   View,
 } from "react-native";
 
-import { getExerciseById } from "../src/game/exercises";
+import { useCustomExercises } from "../src/game/customExercises";
 import {
   useWorkoutHistory,
   WeightUnit,
@@ -23,11 +23,20 @@ import {
 import { useWorkoutSession } from "../src/game/workoutSession";
 
 export default function LogWorkoutScreen() {
-  const { id } = useLocalSearchParams();
+  const { id, editEntryId } = useLocalSearchParams();
 
+  const { getExerciseById } = useCustomExercises();
   const exercise = getExerciseById(id as string);
-  const { addSessionEntry } = useWorkoutSession();
+
+  const { addSessionEntry, updateSessionEntry, getSessionEntryById } =
+    useWorkoutSession();
   const { getLatestExerciseEntry } = useWorkoutHistory();
+
+  const editingEntry = editEntryId
+    ? getSessionEntryById(editEntryId as string)
+    : undefined;
+
+  const isEditing = Boolean(editingEntry);
 
   const [reps, setReps] = useState("");
   const [sets, setSets] = useState("");
@@ -35,6 +44,21 @@ export default function LogWorkoutScreen() {
   const [weightUnit, setWeightUnit] = useState<WeightUnit>("lbs");
   const [time, setTime] = useState("");
   const [distance, setDistance] = useState("");
+
+  // When the user edits a current-session entry, fill the form with the old
+  // values so they only need to correct the mistake.
+  useEffect(() => {
+    if (!editingEntry) {
+      return;
+    }
+
+    setReps(editingEntry.reps?.toString() ?? "");
+    setSets(editingEntry.sets?.toString() ?? "");
+    setWeight(editingEntry.weight?.toString() ?? "");
+    setWeightUnit(editingEntry.weightUnit ?? "lbs");
+    setTime(editingEntry.time?.toString() ?? "");
+    setDistance(editingEntry.distance?.toString() ?? "");
+  }, [editingEntry]);
 
   // Find the most recent saved version of this exercise.
   // This is only for comparison on the log screen.
@@ -62,7 +86,7 @@ export default function LogWorkoutScreen() {
     return new Date(isoString).toLocaleDateString();
   }
 
-  function saveExerciseToSession() {
+  function saveEntryToSession() {
     if (!exercise) return;
 
     if (exercise.type === "strength") {
@@ -76,15 +100,21 @@ export default function LogWorkoutScreen() {
 
       // Bodyweight exercises skip the weight input entirely.
       if (weightUnit === "bodyweight") {
-        addSessionEntry({
+        const entry = {
           exerciseId: exercise.id,
           exerciseName: exercise.name,
           type: exercise.type,
           stats: exercise.stats,
-          weightUnit: "bodyweight",
+          weightUnit: "bodyweight" as WeightUnit,
           reps: repsNumber,
           sets: setsNumber,
-        });
+        };
+
+        if (editingEntry) {
+          updateSessionEntry(editingEntry.id, entry);
+        } else {
+          addSessionEntry(entry);
+        }
 
         router.back();
         return;
@@ -97,7 +127,7 @@ export default function LogWorkoutScreen() {
         return;
       }
 
-      addSessionEntry({
+      const entry = {
         exerciseId: exercise.id,
         exerciseName: exercise.name,
         type: exercise.type,
@@ -106,7 +136,13 @@ export default function LogWorkoutScreen() {
         weightUnit,
         reps: repsNumber,
         sets: setsNumber,
-      });
+      };
+
+      if (editingEntry) {
+        updateSessionEntry(editingEntry.id, entry);
+      } else {
+        addSessionEntry(entry);
+      }
 
       router.back();
       return;
@@ -120,14 +156,20 @@ export default function LogWorkoutScreen() {
       return;
     }
 
-    addSessionEntry({
+    const entry = {
       exerciseId: exercise.id,
       exerciseName: exercise.name,
       type: exercise.type,
       stats: exercise.stats,
       time: timeNumber,
       distance: distanceNumber,
-    });
+    };
+
+    if (editingEntry) {
+      updateSessionEntry(editingEntry.id, entry);
+    } else {
+      addSessionEntry(entry);
+    }
 
     router.back();
   }
@@ -164,8 +206,13 @@ export default function LogWorkoutScreen() {
           keyboardShouldPersistTaps="handled"
         >
           <Text style={styles.title}>{exercise.name}</Text>
+          <Text style={styles.modeText}>
+            {isEditing
+              ? "Editing current workout entry"
+              : "Add to current workout"}
+          </Text>
 
-          {previousEntry && (
+          {previousEntry && !isEditing && (
             <View style={styles.previousCard}>
               <Text style={styles.previousTitle}>Previous Performance</Text>
               <Text style={styles.previousText}>
@@ -285,9 +332,11 @@ export default function LogWorkoutScreen() {
               styles.button,
               pressed && styles.buttonPressed,
             ]}
-            onPress={saveExerciseToSession}
+            onPress={saveEntryToSession}
           >
-            <Text style={styles.buttonText}>Add To Workout</Text>
+            <Text style={styles.buttonText}>
+              {isEditing ? "Save Changes" : "Add To Workout"}
+            </Text>
           </Pressable>
 
           <Pressable
@@ -310,24 +359,25 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: "#000",
   },
-
   container: {
     flex: 1,
     backgroundColor: "#000",
   },
-
   content: {
     flexGrow: 1,
     padding: 20,
     justifyContent: "center",
   },
-
   title: {
     fontSize: 28,
     color: "white",
-    marginBottom: 24,
+    marginBottom: 6,
   },
-
+  modeText: {
+    color: "#aaa",
+    fontSize: 15,
+    marginBottom: 18,
+  },
   previousCard: {
     backgroundColor: "#111",
     borderRadius: 12,
@@ -336,25 +386,21 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#1f1f1f",
   },
-
   previousTitle: {
     color: "#1e90ff",
     fontSize: 18,
     fontWeight: "bold",
     marginBottom: 8,
   },
-
   previousText: {
     color: "white",
     fontSize: 16,
     marginBottom: 6,
   },
-
   previousSubtext: {
     color: "#999",
     fontSize: 14,
   },
-
   input: {
     backgroundColor: "#111",
     color: "white",
@@ -362,13 +408,11 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     marginBottom: 15,
   },
-
   unitRow: {
     flexDirection: "row",
     flexWrap: "wrap",
     marginBottom: 15,
   },
-
   unitButton: {
     backgroundColor: "#222",
     paddingVertical: 12,
@@ -377,17 +421,14 @@ const styles = StyleSheet.create({
     marginRight: 10,
     marginBottom: 10,
   },
-
   unitButtonSelected: {
     backgroundColor: "#1e90ff",
   },
-
   unitButtonText: {
     color: "white",
     fontSize: 16,
     fontWeight: "bold",
   },
-
   infoBox: {
     backgroundColor: "#0f1720",
     borderRadius: 8,
@@ -396,31 +437,26 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#1e90ff",
   },
-
   infoText: {
     color: "#cfe7ff",
     fontSize: 15,
   },
-
   button: {
     backgroundColor: "#1e90ff",
     padding: 15,
     borderRadius: 10,
     marginTop: 10,
   },
-
   secondaryButton: {
     backgroundColor: "#333",
     padding: 15,
     borderRadius: 10,
     marginTop: 12,
   },
-
   buttonPressed: {
     opacity: 0.75,
     transform: [{ scale: 0.97 }],
   },
-
   buttonText: {
     color: "white",
     fontSize: 18,

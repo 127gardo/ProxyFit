@@ -3,6 +3,7 @@ import { useEffect } from "react";
 
 import { AuthProvider, useAuth } from "../src/auth/AuthProvider";
 import { CharacterProvider } from "../src/game/character";
+import { CustomExercisesProvider } from "../src/game/customExercises";
 import { WorkoutHistoryProvider } from "../src/game/workoutHistory";
 import { WorkoutSessionProvider } from "../src/game/workoutSession";
 
@@ -53,51 +54,63 @@ function AppNavigator() {
   return (
     <CharacterProvider>
       <WorkoutHistoryProvider>
-        <WorkoutSessionProvider>
-          <Stack screenOptions={{ headerShown: false }}>
-            <Stack.Screen name="login" options={{ headerShown: false }} />
-            <Stack.Screen
-              name="forgot-password"
-              options={{ headerShown: false }}
-            />
-            <Stack.Screen
-              name="reset-password"
-              options={{ headerShown: false }}
-            />
+        <CustomExercisesProvider>
+          <WorkoutSessionProvider>
+            <Stack screenOptions={{ headerShown: false }}>
+              <Stack.Screen name="login" options={{ headerShown: false }} />
+              <Stack.Screen
+                name="forgot-password"
+                options={{ headerShown: false }}
+              />
+              <Stack.Screen
+                name="reset-password"
+                options={{ headerShown: false }}
+              />
 
-            <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+              <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
 
-            <Stack.Screen
-              name="logWorkout"
-              options={{
-                title: "Log Exercise",
-                headerStyle: { backgroundColor: "#111" },
-                headerTintColor: "#fff",
-                contentStyle: { backgroundColor: "#000" },
-              }}
-            />
+              <Stack.Screen
+                name="logWorkout"
+                options={{
+                  title: "Log Exercise",
+                  headerStyle: { backgroundColor: "#111" },
+                  headerTintColor: "#fff",
+                  contentStyle: { backgroundColor: "#000" },
+                }}
+              />
 
-            <Stack.Screen
-              name="completeWorkout"
-              options={{
-                title: "Complete Workout",
-                headerStyle: { backgroundColor: "#111" },
-                headerTintColor: "#fff",
-                contentStyle: { backgroundColor: "#000" },
-              }}
-            />
+              <Stack.Screen
+                name="completeWorkout"
+                options={{
+                  title: "Complete Workout",
+                  headerStyle: { backgroundColor: "#111" },
+                  headerTintColor: "#fff",
+                  contentStyle: { backgroundColor: "#000" },
+                }}
+              />
 
-            <Stack.Screen
-              name="history"
-              options={{
-                title: "Workout History",
-                headerStyle: { backgroundColor: "#111" },
-                headerTintColor: "#fff",
-                contentStyle: { backgroundColor: "#000" },
-              }}
-            />
-          </Stack>
-        </WorkoutSessionProvider>
+              <Stack.Screen
+                name="addExercise"
+                options={{
+                  title: "Add Exercise",
+                  headerStyle: { backgroundColor: "#111" },
+                  headerTintColor: "#fff",
+                  contentStyle: { backgroundColor: "#000" },
+                }}
+              />
+
+              <Stack.Screen
+                name="history"
+                options={{
+                  title: "Workout History",
+                  headerStyle: { backgroundColor: "#111" },
+                  headerTintColor: "#fff",
+                  contentStyle: { backgroundColor: "#000" },
+                }}
+              />
+            </Stack>
+          </WorkoutSessionProvider>
+        </CustomExercisesProvider>
       </WorkoutHistoryProvider>
     </CharacterProvider>
   );

@@ -4,15 +4,12 @@ import type { Character } from "./character";
 import type { WorkoutDay } from "./workoutHistory";
 
 /*
-  This file is the small "cloud save layer" for ProxyFit.
+  Cloud save layer for ProxyFit.
 
-  Beginner explanation:
-  - AsyncStorage is the save file on the phone.
-  - Supabase is the save file in the cloud.
-  - This file contains helper functions that know how to talk to Supabase.
-
-  The rest of the app should not need to know the exact table names or Supabase
-  query syntax. It can just call functions like saveCloudCharacter(...).
+  Supabase tables store the actual game data inside a JSON/JSONB column named
+  "data". That is good for this stage of the app because we can add fields like
+  spotterPoints, ownedSpotters, rewardedBossLevels, etc. without changing the
+  Supabase table schema every time.
 */
 
 const CHARACTER_TABLE = "proxyfit_characters";
